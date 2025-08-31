@@ -12,6 +12,9 @@ from dotenv import load_dotenv
 from typing import cast
 import logging
 import re
+import base64
+import hashlib
+from summary import summary_page as render_summary_page
 
 # Настройка логирования
 logging.basicConfig(level=logging.DEBUG)
@@ -49,60 +52,35 @@ ANON_PASSWORD: str = cast(str, anon_password_env)
 CSS = """
 <style>
     .stApp {
-        background-color: transparent;
-        color: #111111;
+        color: #ffffff;
         max-width: 1200px;
         margin: 0 auto;
         font-family: Arial, sans-serif;
     }
     [data-testid="stSidebar"] {
         width: 300px;
-        background-color: #0f0f12;
-        border-right: 1px solid #1c1c20;
     }
     .chat-history-item {
-        background-color: #17171b;
-        border: 1px solid #22232a;
         color: #ffffff;
         padding: 10px;
         margin: 6px 0;
         border-radius: 8px;
-        cursor: pointer;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-    .chat-history-item:hover {
-        background-color: #1e1e24;
-    }
-    .chat-history-item.active {
-        background-color: #1b1b20;
-        border-color: #2a2b33;
     }
     .stButton > button {
-        background-color: #2c2d34;
         color: #ffffff;
         border-radius: 6px;
     }
-    .stButton > button:hover {
-        background-color: #3a3b45;
-    }
     .stTextInput > div > input {
-        background-color: #121216;
         color: #ffffff;
-        border: 1px solid #23242b;
     }
     .header-container h1 {
         color: #ffffff;
-        background-color: transparent;
         padding: 4px 0;
         border-radius: 0;
     }
     h2, h3, h4 { color: #ffffff; }
     .stMarkdown p { color: #ffffff; }
     .stSelectbox label { color: #ffffff; }
-    .stChatMessage { background-color: #121216; border: 1px solid #1f2027; color: #ffffff; }
-    .stAlert { border-radius: 6px; }
 </style>
 """
 
@@ -368,7 +346,7 @@ def send_prompt(thread_id, prompt, subject):
             content_blocks = messages.data[0].content
             response = ""
             file_ids = set()
-
+            
             for block in content_blocks:
                 try:
                     text_part = getattr(block, 'text', None)
@@ -405,19 +383,19 @@ def send_prompt(thread_id, prompt, subject):
                             file_ids.add(fid)
                 except Exception:
                     continue
-
+            
             # Strip inline citation markers like 【4:6†source】 and †source leftovers
             try:
                 response = re.sub(r"【[^】]*】", "", response)
                 response = re.sub(r"†source", "", response, flags=re.IGNORECASE)
             except Exception:
                 pass
-
+            
             if not response:
                 logger.warning("No text content found in assistant response.")
                 st.error("Ассистент жауап бере алмады немесе жауапта мәтін жоқ.")
                 return None
-
+            
             # Resolve file IDs to filenames
             filenames = []
             for fid in sorted(file_ids):
@@ -427,10 +405,10 @@ def send_prompt(thread_id, prompt, subject):
                     filenames.append(fname)
                 except Exception:
                     filenames.append(fid)
-
+            
             if filenames:
                 response += f"\n\n**📚 Дереккөздер:** {', '.join(dict.fromkeys(filenames))}"
-
+            
             logger.debug(f"Received response: {response[:100]}...")
             return response
         except RateLimitError:
@@ -439,8 +417,7 @@ def send_prompt(thread_id, prompt, subject):
                 retry_delay *= 2
             else:
                 logger.error("OpenAI rate limit exceeded")
-                st.error(
-                    "Қате: OpenAI лимиті асып кетті. 2-3 минут күтіңіз немесе OpenAI есептік жазбаңызды тексеріңіз: https://platform.openai.com/account/usage")
+                st.error("Қате: OpenAI лимиті асып кетті. 2-3 минут күтіңіз немесе OpenAI есептік жазбаңызды тексеріңіз: https://platform.openai.com/account/usage")
                 return None
         except Exception as e:
             logger.error(f"Ошибка отправки запроса: {str(e)}")
@@ -449,9 +426,31 @@ def send_prompt(thread_id, prompt, subject):
         time.sleep(5)
 
 
+def extract_kazakh_text_from_image(image_bytes: bytes, mime_type: str = "image/png") -> str:
+    try:
+        data_url = f"data:{mime_type};base64,{base64.b64encode(image_bytes).decode('utf-8')}"
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Суреттен қазақша мәтінді дәл шығарып бер. Тек мәтіннің өзін қайтар."},
+                        {"type": "image_url", "image_url": {"url": data_url}}
+                    ]
+                }
+            ],
+            temperature=0
+        )
+        content = resp.choices[0].message.content
+        return content.strip() if isinstance(content, str) else (content or "").strip()
+    except Exception:
+        return ""
+
+
 def login_page():
     st.title("Кіру")
-    st.markdown("<div class='header-container'><h1>🧠 ЕНТ Көмекшісі</h1></div>", unsafe_allow_html=True)
+    st.markdown("<div class='header-container'><h1>🧠 UBT-GPT</h1></div>", unsafe_allow_html=True)
 
     # Вкладки для входа и регистрации
     tab1, tab2 = st.tabs(["Кіру", "Тіркелу"])  # Анонимді кіру алынып тасталды
@@ -484,10 +483,9 @@ def login_page():
 
 
 def main_page():
-    st.title("Басты бет")
-    st.write("Бұл ЕНТ-ға дайындыққа арналған қолданбаның басты беті.")
+    st.markdown("<h1 style='color: #ffffff;'>UBT-GPT🏆</h1>", unsafe_allow_html=True)
     st.markdown(
-        "Мұнда сіз пәндер бойынша сұрақтар қойып, жауап ала аласыз немесе **Тест** және **Психолог** бөлімдерін таңдай аласыз.")
+        "Мұнда сіз пәндер бойынша сұрақтар қойып, жауап ала аласыз немесе **TEST📝** және **NUR✨** бөлімдерін таңдай аласыз.")
 
     # Инициализация сессии
     if "main_chat_id" not in st.session_state:
@@ -503,14 +501,10 @@ def main_page():
         st.session_state.action_state = {"action": None, "chat_id": None}
         logger.debug(f"Initialized session: chat_id={chat_id}, title={title}")
 
-    # Интерфейс
-    st.markdown(CSS, unsafe_allow_html=True)
-    st.markdown("<div class='header-container'><h1>🧠 ЕНТ Көмекшісі</h1></div>", unsafe_allow_html=True)
-
     # Бүйірлік панель
     with st.sidebar:
         st.markdown(
-            "<h2 style='text-align: center; color: #ffffff; background-color: #00cc00; padding: 10px; border-radius: 8px;'>💬 Чаттар</h2>",
+            "<h2 style='text-align: center; color: #ffffff;'>💬 Чаттар</h2>",
             unsafe_allow_html=True)
 
         # Жаңа чат
@@ -527,74 +521,8 @@ def main_page():
             st.session_state.action_state = {"action": None, "chat_id": None}
             st.rerun()
 
-        # Чат тарихы
-        chat_files = load_main_chat_titles(st.session_state.user_id)
-        for chat in chat_files:
-            chat_id = chat["id"]
-            chat_title = chat["title"]
-            active = chat_id == st.session_state.get("main_chat_id", "")
-            css_class = "chat-history-item active" if active else "chat-history-item"
-
-            with st.container():
-                col1, col2, col3 = st.columns([3, 1, 1])
-                with col1:
-                    if st.button(chat_title, key=f"select_main_{chat_id}"):
-                        st.session_state.main_chat_id = chat_id
-                        st.session_state.main_chat_title = chat_title
-                        st.session_state.main_messages, st.session_state.main_thread_id = load_main_chat(chat_id)
-                        st.session_state.action_state = {"action": None, "chat_id": None}
-                        st.rerun()
-                with col2:
-                    if st.button("✏️", key=f"rename_main_{chat_id}"):
-                        st.session_state.action_state = {"action": "rename", "chat_id": chat_id}
-                        st.rerun()
-                with col3:
-                    if st.button("🗑️", key=f"delete_main_{chat_id}"):
-                        st.session_state.action_state = {"action": "delete", "chat_id": chat_id}
-                        st.rerun()
-
-                # Обработка действий
-                if st.session_state.action_state["chat_id"] == chat_id:
-                    if st.session_state.action_state["action"] == "rename":
-                        new_name = st.text_input("Жаңа атау енгізіңіз:", key=f"rename_input_main_{chat_id}")
-                        col_save, col_cancel = st.columns(2)
-                        with col_save:
-                            if st.button("Сақтау", key=f"save_rename_main_{chat_id}"):
-                                success, result = rename_main_chat(chat_id, new_name)
-                                if success:
-                                    if chat_id == st.session_state.get("main_chat_id", ""):
-                                        st.session_state.main_chat_title = result
-                                    st.session_state.action_state = {"action": None, "chat_id": None}
-                                    st.rerun()
-                                else:
-                                    st.error(result)
-                        with col_cancel:
-                            if st.button("Болдырмау", key=f"cancel_rename_main_{chat_id}"):
-                                st.session_state.action_state = {"action": None, "chat_id": None}
-                                st.rerun()
-                    elif st.session_state.action_state["action"] == "delete":
-                        st.warning(f"'{chat_title}' чатын жоюды растаңыз:")
-                        col_confirm, col_cancel = st.columns(2)
-                        with col_confirm:
-                            if st.button("Иә, жою", key=f"confirm_delete_main_{chat_id}"):
-                                if delete_main_chat(chat_id):
-                                    if chat_id == st.session_state.get("main_chat_id", ""):
-                                        chat_id, title, thread_id = create_new_main_chat(st.session_state.user_id)
-                                        if chat_id is None:
-                                            st.error("Жаңа чат құру мүмкін болмады.")
-                                            return
-                                        st.session_state.main_chat_id = chat_id
-                                        st.session_state.main_chat_title = title
-                                        st.session_state.main_messages = []
-                                        st.session_state.main_thread_id = thread_id
-                                    st.session_state.action_state = {"action": None, "chat_id": None}
-                                    st.rerun()
-                                else:
-                                    st.error("Чатты жою кезінде қате шықты.")
-                        with col_cancel:
-                            if st.button("Жоқ", key=f"cancel_delete_main_{chat_id}"):
-                                st.session_state.action_state = {"action": None, "chat_id": None}
-                                st.rerun()
+    # Негізгі интерфейс стилі
+    st.markdown(CSS, unsafe_allow_html=True)
 
     # Негізгі мазмұн
     subject = st.selectbox("Пәнді таңдаңыз", list(SUBJECTS.keys()), key="subject_select")
@@ -602,6 +530,66 @@ def main_page():
     for msg in (st.session_state.main_messages or []):
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
+
+    # Image inputs
+    # Camera controls placed above inputs
+    if "show_main_camera" not in st.session_state:
+        st.session_state["show_main_camera"] = False
+    cam_cols = st.columns([1, 1, 2])
+    with cam_cols[0]:
+        if not st.session_state.get("show_main_camera"):
+            if st.button("Open Camera", key="main_open_camera"):
+                st.session_state["show_main_camera"] = True
+                st.rerun()
+        else:
+            if st.button("Close Camera", key="main_close_camera"):
+                st.session_state["show_main_camera"] = False
+                st.rerun()
+
+    col_img1, col_img2 = st.columns(2)
+    with col_img1:
+        uploaded_img = st.file_uploader("Сурет жүктеу (JPEG/PNG)", type=["png", "jpg", "jpeg"], key="main_image_uploader")
+    captured_img = None
+    with col_img2:
+        if st.session_state.get("show_main_camera"):
+            captured_img = st.camera_input("Камерадан түсіру", key="main_camera")
+
+    # Auto-extract after upload or capture
+    img_obj = uploaded_img or captured_img
+    if img_obj is not None:
+        try:
+            image_bytes = img_obj.getvalue() if hasattr(img_obj, "getvalue") else img_obj.read()
+        except Exception:
+            image_bytes = None
+        mime_type = getattr(img_obj, "type", None) or "image/png"
+        if image_bytes:
+            try:
+                current_hash = hashlib.md5(image_bytes).hexdigest()
+            except Exception:
+                current_hash = None
+            last_hash = st.session_state.get("last_main_img_hash")
+            if current_hash and current_hash != last_hash:
+                st.session_state["last_main_img_hash"] = current_hash
+                extracted_text = extract_kazakh_text_from_image(image_bytes, mime_type)
+                if extracted_text:
+                    st.session_state.main_messages.append({"role": "user", "content": extracted_text})
+                    with st.chat_message("user"):
+                        st.markdown(extracted_text)
+                    with st.spinner("Жауап дайындалуда..."):
+                        response = send_prompt(st.session_state.main_thread_id, extracted_text, subject)
+                        if response:
+                            st.session_state.main_messages.append({"role": "assistant", "content": response})
+                            with st.chat_message("assistant"):
+                                st.markdown(response)
+                            save_main_chat(
+                                chat_id=st.session_state.main_chat_id,
+                                user_id=st.session_state.user_id,
+                                messages=st.session_state.main_messages,
+                                title=st.session_state.main_chat_title,
+                                thread_id=st.session_state.main_thread_id
+                            )
+                else:
+                    st.error("Мәтін табылмады. Басқа ракурс/сапалы сурет жүктеп көріңіз.")
 
     user_input = st.chat_input("Сұрағыңызды енгізіңіз...", key="main_input")
     if user_input:
@@ -635,7 +623,7 @@ def main_page():
 
 # Навигация
 def main():
-    st.set_page_config(page_title="ЕНТ Көмекшісі", layout="wide")
+    st.set_page_config(page_title="UBT-GPT🏆", layout="wide")
 
     # Попытка восстановить сессию Supabase из сохраненных токенов
     try:
@@ -683,15 +671,17 @@ def main():
     if st.sidebar.button("Шығу", key="sidebar_logout"):
         sign_out()
 
-    page = st.sidebar.selectbox("Бетті таңдаңыз", ["Басты бет", "Тест", "Психолог"], key="page_select")
+    page = st.sidebar.selectbox("Бетті таңдаңыз", ["UBT-GPT🏆", "TEST📝", "NUR✨", "SUMMARY📚"], key="page_select")
     logger.debug(f"Selected page: {page}")
 
-    if page == "Басты бет":
+    if page == "UBT-GPT🏆":
         main_page()
-    elif page == "Тест":
+    elif page == "TEST📝":
         test_page()
-    elif page == "Психолог":
+    elif page == "NUR✨":
         psychology_page()
+    elif page == "SUMMARY📚":
+        render_summary_page(supabase)
 
 
 if __name__ == "__main__":
