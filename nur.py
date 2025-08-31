@@ -43,18 +43,14 @@ PSYCHOLOGY_PROMPT = """
 # Упрощенный CSS
 CSS = """
 <style>
-    .stApp { background: #0b0b0f; color: #ffffff; max-width: 1200px; margin: 0 auto; font-family: Arial, sans-serif; }
-    [data-testid="stSidebar"] { width: 300px; background: #0f0f12; border-right: 1px solid #1c1c20; }
-    .chat-history-item { background: #17171b; border: 1px solid #22232a; color: #ffffff; padding: 10px; margin: 6px 0; border-radius: 8px; }
-    .chat-history-item:hover { background: #1e1e24; }
-    .chat-history-item.active { background: #1b1b20; border-color: #2a2b33; }
-    .stButton > button { background: #2c2d34; color: #fff; border-radius: 6px; }
-    .stButton > button:hover { background: #3a3b45; }
-    .stTextInput > div > input { background: #121216; color: #ffffff; border: 1px solid #23242b; }
-    .header-container h1 { color: #ffffff; background: transparent; padding: 4px 0; border-radius: 0; }
+    .stApp { color: #ffffff; max-width: 1200px; margin: 0 auto; font-family: Arial, sans-serif; }
+    [data-testid="stSidebar"] { width: 300px; }
+    .chat-history-item { color: #ffffff; padding: 10px; margin: 6px 0; border-radius: 8px; }
+    .stButton > button { color: #ffffff; border-radius: 6px; }
+    .stTextInput > div > input { color: #ffffff; }
+    .header-container h1 { color: #ffffff; padding: 4px 0; border-radius: 0; }
 </style>
 """
-
 
 def load_psychology_chat_titles(user_id):
     try:
@@ -67,7 +63,6 @@ def load_psychology_chat_titles(user_id):
         st.error(f"Чат тарихын жүктеу кезінде қате: {str(e)}")
         return []
 
-
 def load_psychology_chat(chat_id):
     try:
         response = supabase.table("psychology_chats").select("messages").eq("id", chat_id).execute()
@@ -79,7 +74,6 @@ def load_psychology_chat(chat_id):
         logger.error(f"Ошибка загрузки чата {chat_id}: {str(e)}")
         st.error(f"Чатты жүктеу кезінде қате: {str(e)}")
         return []
-
 
 def save_psychology_chat(chat_id, user_id, messages, title):
     try:
@@ -104,7 +98,6 @@ def save_psychology_chat(chat_id, user_id, messages, title):
         logger.error(f"Ошибка сохранения чата {chat_id}: {str(e)}")
         st.error(f"Чатты сақтау кезінде қате: {str(e)}")
 
-
 def delete_psychology_chat(chat_id):
     try:
         response = supabase.table("psychology_chats").delete().eq("id", chat_id).execute()
@@ -115,7 +108,6 @@ def delete_psychology_chat(chat_id):
         st.error(f"Чатты жою кезінде қате: {str(e)}")
         return False
 
-
 def rename_psychology_chat(chat_id, new_name):
     if not new_name:
         return False, "Жаңа атау бос болмауы керек."
@@ -123,14 +115,12 @@ def rename_psychology_chat(chat_id, new_name):
         response = supabase.table("psychology_chats").select("id").eq("title", new_name).execute()
         if response.data:
             return False, "Бұл атаумен чат бар."
-        supabase.table("psychology_chats").update({"title": new_name, "updated_at": datetime.utcnow().isoformat()}).eq(
-            "id", chat_id).execute()
+        supabase.table("psychology_chats").update({"title": new_name, "updated_at": datetime.utcnow().isoformat()}).eq("id", chat_id).execute()
         logger.debug(f"Renamed psychology chat {chat_id} to {new_name}")
         return True, new_name
     except Exception as e:
         logger.error(f"Ошибка переименования чата {chat_id}: {str(e)}")
         return False, f"Чат атауын өзгерту кезінде қате: {str(e)}"
-
 
 def create_new_psychology_chat(user_id):
     try:
@@ -151,14 +141,12 @@ def create_new_psychology_chat(user_id):
         st.error(f"Жаңа чат құру кезінде қате: {str(e)}")
         return None, None
 
-
 def generate_chat_title(prompt):
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system",
-                 "content": "Сұрақ негізінде қазақ тілінде қысқа тақырыпты анықта (максимум 5 сөз). Формат: 'Психология - [Тақырып]'"},
+                {"role": "system", "content": "Сұрақ негізінде қазақ тілінде қысқа тақырыпты анықта (максимум 5 сөз). Формат: 'Психология - [Тақырып]'"},
                 {"role": "user", "content": f"Сұрақ: {prompt}"}
             ],
             temperature=0.5
@@ -173,6 +161,7 @@ def generate_chat_title(prompt):
     except Exception as e:
         logger.error(f"Ошибка генерации заголовка: {str(e)}")
         return "Психология - Сұрақ"
+
 
 
 def psychology_page():
@@ -198,8 +187,7 @@ def psychology_page():
     if "psychology_chat_id" not in st.session_state:
         chat_id, title = create_new_psychology_chat(st.session_state.user_id)
         if chat_id is None:
-            st.error(
-                "Жаңа чат құру мүмкін болмады. Supabase-те 'psychology_chats' таблицасы бар екеніне көз жеткізіңіз.")
+            st.error("Жаңа чат құру мүмкін болмады. Supabase-те 'psychology_chats' таблицасы бар екеніне көз жеткізіңіз.")
             logger.error("Failed to create new psychology chat")
             return
         st.session_state.psychology_chat_id = chat_id
@@ -208,12 +196,17 @@ def psychology_page():
         logger.debug(f"Initialized psychology chat: {chat_id}")
 
     st.markdown(CSS, unsafe_allow_html=True)
-    st.markdown("<div class='header-container'><h1>🧠 ЕНТ Психолог-Көмекшісі</h1></div>", unsafe_allow_html=True)
+    st.markdown(
+    "<div class='header-container'>"
+    "<h1><b>NUR✨</b></h1>"
+    "<p style='color:#ffffff;'><b>Бұл бет ҰБТ-ға дайындалып жүрген оқушыларға қолдау көрсетіп, жанашыр кеңес береді.</b><br>"
+    "🧘‍♀️ <i>Стресс</i>, 🎯 <i>шоғырлану</i> немесе 💡 <i>мотивация</i> туралы кез келген сұрақтарыңызды қоя аласыз.</p>"
+    "</div>",
+    unsafe_allow_html=True
+)
 
     with st.sidebar:
-        st.markdown(
-            "<h2 style='text-align: center; color: #ffffff; background-color: #00cc00; padding: 10px; border-radius: 8px;'>💬 Чаттар</h2>",
-            unsafe_allow_html=True)
+        st.markdown("<h2 style='text-align: center; color: #ffffff;'>💬 Чаттар</h2>", unsafe_allow_html=True)
 
         if st.button("🆕 Жаңа чат", key="new_psychology_chat"):
             chat_id, title = create_new_psychology_chat(st.session_state.user_id)
@@ -311,38 +304,38 @@ def psychology_page():
                 try:
                     # Use psychology assistant with file search instead of regular GPT
                     psychology_assistant_id = "asst_psychology_default"  # You'll need to create this assistant
-
+                    
                     # Create a new thread for this conversation
                     thread = client.beta.threads.create()
-
+                    
                     # Add user message to thread
                     client.beta.threads.messages.create(
                         thread_id=thread.id,
                         role="user",
                         content=user_input
                     )
-
+                    
                     # Run the psychology assistant with file search
                     run = client.beta.threads.runs.create(
                         thread_id=thread.id,
                         assistant_id=psychology_assistant_id,
                         tools=[{"type": "file_search"}]
                     )
-
+                    
                     # Wait for completion
                     while run.status in ["queued", "in_progress"]:
                         run = client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run.id)
                         time.sleep(2)
-
+                    
                     if run.status == "completed":
                         # Get the response
                         messages = client.beta.threads.messages.list(thread_id=thread.id, limit=1)
                         response_content = messages.data[0].content
-
+                        
                         # Extract text and sources
                         answer_text = ""
                         sources = set()
-
+                        
                         for block in response_content:
                             try:
                                 if hasattr(block, 'text') and getattr(block, 'text', None):
@@ -361,17 +354,17 @@ def psychology_page():
                             except Exception:
                                 # Skip blocks that can't be processed
                                 continue
-
+                        
                         # Add file sources at the end
                         if sources:
                             answer_text += f"\n\n**📚 Дереккөздер:** {', '.join(sources)}"
                         else:
                             answer_text += f"\n\n**📚 Кітап:** Психология оқулығы"
-
+                        
                         st.session_state.psychology_messages.append({"role": "assistant", "content": answer_text})
                         with st.chat_message("assistant"):
                             st.markdown(answer_text)
-
+                        
                         # Clean up thread
                         client.beta.threads.delete(thread.id)
                     else:
@@ -405,8 +398,7 @@ def psychology_page():
                         retry_delay *= 2
                     else:
                         logger.error("OpenAI rate limit exceeded")
-                        st.error(
-                            "Қате: OpenAI лимиті асып кетті. 2-3 минут күтіңіз немесе OpenAI есептік жазбаңызды тексеріңіз: https://platform.openai.com/account/usage")
+                        st.error("Қате: OpenAI лимиті асып кетті. 2-3 минут күтіңіз немесе OpenAI есептік жазбаңызды тексеріңіз: https://platform.openai.com/account/usage")
                         st.session_state.psychology_messages.append({
                             "role": "assistant",
                             "content": "Кешіріңіз, қазір жауап бере алмаймын. Лимитке жеттіңіз."
