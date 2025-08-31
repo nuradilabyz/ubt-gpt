@@ -1,68 +1,281 @@
-# streamlit_app.py с исправлениями
-import os
 import streamlit as st
 from supabase import create_client, Client
 from openai import OpenAI, RateLimitError
-from test import test_page  # test.py файлы
-from nur import psychology_page, create_new_psychology_chat  # nur.py файлы
+from test import test_page
+from nur import psychology_page, create_new_psychology_chat
+from subjects import SUBJECTS
 import uuid
 from datetime import datetime
 import time
-
 import os
 from dotenv import load_dotenv
+from typing import cast
+import logging
+import re
+
+# Настройка логирования
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 # Загружаем .env
 load_dotenv()
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-# Пәндер бойынша ассистенттер мен векторлық қоймалар тізімі
-SUBJECTS = {
-    "Құқық негіздері": {
-        "assistant_id": "asst_rfV8LBcsVkWveXkvJeLznQZL",
-        "vector_store_id": "vs_689c92f46c6481918819bb833479faed"
-    },
-    "Информатика": {
-        "assistant_id": "asst_NHeMToF2A2rQkyCW1hAcc98p",
-        "vector_store_id": "vs_68a96e6989fc8191bd809a04a3b9262e"
-    },
-    "Қазақ_әдебиеті": {
-        "assistant_id": "asst_WQI6p782I60JIQ5wFaRpscpp",
-        "vector_store_id": "vs_68a9816503d481918df7ad5d636adf77"
-    },
-    "Дүниежүзі тарихы": {
-        "assistant_id": "asst_HXTVe2JcPQOVteAH2vaTL6yy",
-        "vector_store_id": "vs_68a9839f37e08191ad61d66b7f865834"
-    },
-    "Қазақ тілі": {
-        "assistant_id": "asst_UyyzU3SiuA9sYifctwpR4X1G",
-        "vector_store_id": "vs_68a9842055cc8191b18c50a9abf0a887"
-    },
-    "Химия": {
-        "assistant_id": "asst_CDN5PTMSNk7SHHQT0IBlCPtZ",
-        "vector_store_id": "vs_68a984b9919081918e3726352f84b3bf"
-    },
-    "Қазақстан тарихы": {
-        "assistant_id": "asst_KXQFvlA3gXcDYK7R45uVUCoy",
-        "vector_store_id": "vs_68a9870f966c819195becdd8590e966a"
-    },
-    "География": {
-        "assistant_id": "asst_r5okZdEd4vRal023v837k4Yz",
-        "vector_store_id": "vs_68aab608a65c8191a4fa93b4b7fefbaf"
-    }
-}
+supabase_url_env = os.getenv("SUPABASE_URL")
+supabase_key_env = os.getenv("SUPABASE_KEY")
+openai_api_key_env = os.getenv("OPENAI_API_KEY")
+anon_email_env = os.getenv("ANON_EMAIL", "anonymous@example.com")
+anon_password_env = os.getenv("ANON_PASSWORD", "anonymous123")
 
-# ====== Чатты басқару функциялары ======
+# Проверка переменных окружения ДО создания клиентов
+if not all([supabase_url_env, supabase_key_env, openai_api_key_env]):
+    st.error("Қате: .env файлындағы айнымалылар орнатылмаған.")
+    logger.error("Переменные окружения отсутствуют.")
+    st.stop()
+
+SUPABASE_URL: str = cast(str, supabase_url_env)
+SUPABASE_KEY: str = cast(str, supabase_key_env)
+OPENAI_API_KEY: str = cast(str, openai_api_key_env)
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+client = OpenAI(api_key=OPENAI_API_KEY)
+
+# Анонимді кіру үшін параметрлер (қоршаған орта арқылы бапталуы мүмкін)
+ANON_EMAIL: str = cast(str, anon_email_env)
+ANON_PASSWORD: str = cast(str, anon_password_env)
+
+# SUBJECTS subjects.py модулінен импортталды
+
+# Упрощенный CSS
+CSS = """
+<style>
+    .stApp {
+        background-color: transparent;
+        color: #111111;
+        max-width: 1200px;
+        margin: 0 auto;
+        font-family: Arial, sans-serif;
+    }
+    [data-testid="stSidebar"] {
+        width: 300px;
+        background-color: #0f0f12;
+        border-right: 1px solid #1c1c20;
+    }
+    .chat-history-item {
+        background-color: #17171b;
+        border: 1px solid #22232a;
+        color: #ffffff;
+        padding: 10px;
+        margin: 6px 0;
+        border-radius: 8px;
+        cursor: pointer;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .chat-history-item:hover {
+        background-color: #1e1e24;
+    }
+    .chat-history-item.active {
+        background-color: #1b1b20;
+        border-color: #2a2b33;
+    }
+    .stButton > button {
+        background-color: #2c2d34;
+        color: #ffffff;
+        border-radius: 6px;
+    }
+    .stButton > button:hover {
+        background-color: #3a3b45;
+    }
+    .stTextInput > div > input {
+        background-color: #121216;
+        color: #ffffff;
+        border: 1px solid #23242b;
+    }
+    .header-container h1 {
+        color: #ffffff;
+        background-color: transparent;
+        padding: 4px 0;
+        border-radius: 0;
+    }
+    h2, h3, h4 { color: #ffffff; }
+    .stMarkdown p { color: #ffffff; }
+    .stSelectbox label { color: #ffffff; }
+    .stChatMessage { background-color: #121216; border: 1px solid #1f2027; color: #ffffff; }
+    .stAlert { border-radius: 6px; }
+</style>
+"""
+
+
+# Функции управления пользователями
+def sign_in(email, password):
+    try:
+        response = supabase.auth.sign_in_with_password({"email": email, "password": password})
+        if response.user:
+            user_id = response.user.id
+            logger.debug(f"User signed in: {user_id}")
+            # Persist Supabase session tokens
+            try:
+                if hasattr(response, "session") and response.session:
+                    st.session_state["sb_access_token"] = getattr(response.session, "access_token", None)
+                    st.session_state["sb_refresh_token"] = getattr(response.session, "refresh_token", None)
+                else:
+                    logger.warning("No session in sign-in response; tokens not stored")
+            except Exception as token_err:
+                logger.error(f"Failed to store session tokens: {token_err}")
+            return user_id
+        else:
+            logger.error("Sign-in failed: No user returned")
+            st.error("Қате: Жарамсыз email немесе құпия сөз.")
+            return None
+    except Exception as e:
+        logger.error(f"Sign-in error: {str(e)}")
+        st.error(f"Кіру кезінде қате: {str(e)}")
+        return None
+
+
+def sign_up(email, password):
+    try:
+        response = supabase.auth.sign_up({"email": email, "password": password})
+        if response.user:
+            user_id = response.user.id
+            logger.debug(f"User registered: {user_id}")
+            return user_id
+        else:
+            logger.error("Sign-up failed: No user returned")
+            st.error("Қате: Тіркелу сәтсіз аяқталды.")
+            return None
+    except Exception as e:
+        logger.error(f"Sign-up error: {str(e)}")
+        st.error(f"Тіркелу кезінде қате: {str(e)}")
+        return None
+
+
+def sign_out():
+    try:
+        supabase.auth.sign_out()
+        logger.debug("User signed out")
+        st.session_state.user_id = None
+        st.session_state.main_chat_id = None
+        st.session_state.main_chat_title = None
+        st.session_state.main_messages = None
+        st.session_state.main_thread_id = None
+        st.session_state.action_state = {"action": None, "chat_id": None}
+        # Clear persisted auth tokens
+        st.session_state.pop("sb_access_token", None)
+        st.session_state.pop("sb_refresh_token", None)
+        st.rerun()
+    except Exception as e:
+        logger.error(f"Sign-out error: {str(e)}")
+        st.error(f"Шығу кезінде қате: {str(e)}")
+
+
+# Поддержка анонимного пользователя
+def sign_in_anonymous():
+    try:
+        response = supabase.auth.sign_in_with_password({
+            "email": ANON_EMAIL,
+            "password": ANON_PASSWORD
+        })
+        if response.user:
+            user_id = response.user.id
+            logger.debug(f"Anonymous user signed in: {user_id}")
+            # Persist Supabase session tokens for anonymous session
+            try:
+                if hasattr(response, "session") and response.session:
+                    st.session_state["sb_access_token"] = getattr(response.session, "access_token", None)
+                    st.session_state["sb_refresh_token"] = getattr(response.session, "refresh_token", None)
+                else:
+                    logger.warning("No session in anonymous sign-in response; tokens not stored")
+            except Exception as token_err:
+                logger.error(f"Failed to store anonymous session tokens: {token_err}")
+            return user_id
+        else:
+            logger.error("Anonymous sign-in failed: No user returned")
+            st.error("Қате: Анонимді кіру сәтсіз аяқталды.")
+            return None
+    except Exception as e:
+        logger.error(f"Anonymous sign-in error: {str(e)}")
+        # Егер қолданушы жоқ болса, бір рет тіркеп көреміз
+        try:
+            response = supabase.auth.sign_up({"email": ANON_EMAIL, "password": ANON_PASSWORD})
+            if response.user:
+                # Кейбір жағдайларда sign_up автоматты кіру жасамайды — сондықтан қайта sign_in
+                response2 = supabase.auth.sign_in_with_password({"email": ANON_EMAIL, "password": ANON_PASSWORD})
+                if response2.user:
+                    user_id = response2.user.id
+                    if hasattr(response2, "session") and response2.session:
+                        st.session_state["sb_access_token"] = getattr(response2.session, "access_token", None)
+                        st.session_state["sb_refresh_token"] = getattr(response2.session, "refresh_token", None)
+                    logger.debug(f"Anonymous user auto-registered and signed in: {user_id}")
+                    return user_id
+        except Exception as e2:
+            logger.error(f"Anonymous sign-up fallback failed: {e2}")
+        st.error("Анонимді кіру кезінде қате. Әкімшіге хабарласыңыз.")
+        return None
+
+
+# Функции управления чатами
+def load_main_chat_titles(user_id):
+    try:
+        response = supabase.table("main_chats").select("id, title, created_at").eq("user_id", user_id).execute()
+        chats = sorted(response.data, key=lambda x: x["created_at"], reverse=True)
+        logger.debug(f"Loaded main chats for user {user_id}: {chats}")
+        return chats
+    except Exception as e:
+        logger.error(f"Ошибка загрузки чатов: {str(e)}")
+        st.error(f"Чат тарихын жүктеу кезінде қате: {str(e)}")
+        return []
+
+
+def load_main_chat(chat_id):
+    try:
+        response = supabase.table("main_chats").select("messages, thread_id").eq("id", chat_id).execute()
+        if response.data:
+            logger.debug(f"Loaded chat {chat_id}: {response.data[0]}")
+            return response.data[0]["messages"], response.data[0]["thread_id"]
+        return [], None
+    except Exception as e:
+        logger.error(f"Ошибка загрузки чата {chat_id}: {str(e)}")
+        st.error(f"Чатты жүктеу кезінде қате: {str(e)}")
+        return [], None
+
+
+def save_main_chat(chat_id, user_id, messages, title, thread_id):
+    try:
+        existing = supabase.table("main_chats").select("id").eq("id", chat_id).execute()
+        if existing.data:
+            supabase.table("main_chats").update({
+                "messages": messages,
+                "title": title,
+                "updated_at": datetime.utcnow().isoformat()
+            }).eq("id", chat_id).execute()
+        else:
+            supabase.table("main_chats").insert({
+                "id": chat_id,
+                "user_id": user_id,
+                "messages": messages,
+                "title": title,
+                "thread_id": thread_id,
+                "created_at": datetime.utcnow().isoformat(),
+                "updated_at": datetime.utcnow().isoformat()
+            }).execute()
+        logger.debug(f"Saved chat {chat_id} with title {title}")
+    except Exception as e:
+        logger.error(f"Ошибка сохранения чата {chat_id}: {str(e)}")
+        st.error(f"Чатты сақтау кезінде қате: {str(e)}")
+
+
 def delete_main_chat(chat_id):
     try:
         response = supabase.table("main_chats").delete().eq("id", chat_id).execute()
+        logger.debug(f"Deleted chat {chat_id}: {response.data}")
         return response.data is not None
     except Exception as e:
+        logger.error(f"Ошибка удаления чата {chat_id}: {str(e)}")
         st.error(f"Чатты жою кезінде қате: {str(e)}")
         return False
+
 
 def rename_main_chat(chat_id, new_name):
     if not new_name:
@@ -71,34 +284,64 @@ def rename_main_chat(chat_id, new_name):
         response = supabase.table("main_chats").select("id").eq("title", new_name).execute()
         if response.data:
             return False, "Бұл атаумен чат бар."
-        supabase.table("main_chats").update({"title": new_name}).eq("id", chat_id).execute()
+        supabase.table("main_chats").update({"title": new_name, "updated_at": datetime.utcnow().isoformat()}).eq("id",
+                                                                                                                 chat_id).execute()
+        logger.debug(f"Renamed chat {chat_id} to {new_name}")
         return True, new_name
     except Exception as e:
+        logger.error(f"Ошибка переименования чата {chat_id}: {str(e)}")
         return False, f"Чат атауын өзгерту кезінде қате: {str(e)}"
 
-def create_new_main_chat():
+
+def create_new_main_chat(user_id):
     try:
         chat_id = str(uuid.uuid4())
-        title = datetime.now().strftime("%H:%M:%S")  # Изменено на час:минута:секунда для уникальности
+        title = "Жаңа чат"
         thread_id = client.beta.threads.create().id
-        # Save new chat to Supabase with thread_id
         supabase.table("main_chats").insert({
             "id": chat_id,
-            "user_id": "anonymous",
+            "user_id": user_id,
             "title": title,
             "messages": [],
             "thread_id": thread_id,
-            "created_at": datetime.utcnow().isoformat()
+            "created_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.utcnow().isoformat()
         }).execute()
+        logger.debug(f"Created new chat {chat_id} with thread {thread_id} for user {user_id}")
         return chat_id, title, thread_id
     except Exception as e:
+        logger.error(f"Ошибка создания чата: {str(e)}")
         st.error(f"Жаңа чат құру кезінде қате: {str(e)}")
         return None, None, None
 
 
+def generate_chat_title(prompt, subject):
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system",
+                 "content": "Сұрақ негізінде қазақ тілінде қысқа тақырыпты анықта (максимум 5 сөз). Формат: '[Пән] - [Тақырып]'"},
+                {"role": "user", "content": f"Пән: {subject}\nСұрақ: {prompt}"}
+            ],
+            temperature=0.5
+        )
+        content = response.choices[0].message.content
+        if content is not None:
+            title = content.strip()
+        else:
+            title = f"{subject} - Сұрақ"
+            logger.warning("Received None as chat title content from OpenAI.")
+        logger.debug(f"Generated title: {title}")
+        return title
+    except Exception as e:
+        logger.error(f"Ошибка генерации заголовка: {str(e)}")
+        return f"{subject} - Сұрақ"
+
+
 def send_prompt(thread_id, prompt, subject):
     max_retries = 5
-    retry_delay = 10  # Initial delay in seconds
+    retry_delay = 10
     for attempt in range(max_retries):
         try:
             client.beta.threads.messages.create(
@@ -118,191 +361,174 @@ def send_prompt(thread_id, prompt, subject):
                 error_msg = f"Ассистенттің орындау қатесі: {run.status}"
                 if run.last_error:
                     error_msg += f" ({run.last_error.code}: {run.last_error.message})"
+                logger.error(error_msg)
                 st.error(error_msg)
                 return None
             messages = client.beta.threads.messages.list(thread_id=thread_id, limit=1)
-            message_content = messages.data[0].content[0].text
-            annotations = message_content.annotations
-            citations = []
+            content_blocks = messages.data[0].content
+            response = ""
+            file_ids = set()
 
-            for index, annotation in enumerate(annotations):
-                message_content.value = message_content.value.replace(annotation.text, f' [{index}]')
-                if file_citation := getattr(annotation, 'file_citation', None):
-                    try:
-                        cited_file = client.files.retrieve(file_citation.file_id)
-                        citations.append(f'[{index}] {cited_file.filename}')
-                    except Exception as e:
-                        st.error(f"Файлды алу кезінде қате: {e}")
-                        citations.append(f'[{index}] Белгісіз файл')
+            for block in content_blocks:
+                try:
+                    text_part = getattr(block, 'text', None)
+                    if text_part is not None:
+                        value = getattr(text_part, 'value', None)
+                        if isinstance(value, str):
+                            response += value
+                        # Collect file IDs from text annotations if present
+                        annotations = getattr(text_part, 'annotations', None)
+                        if annotations:
+                            for ann in annotations:
+                                file_citation = getattr(ann, 'file_citation', None)
+                                if file_citation:
+                                    fid = getattr(file_citation, 'file_id', None)
+                                    if isinstance(fid, str):
+                                        file_ids.add(fid)
+                                else:
+                                    # file_path annotations can also reference files
+                                    file_path = getattr(ann, 'file_path', None)
+                                    if file_path:
+                                        fid = getattr(file_path, 'file_id', None)
+                                        if isinstance(fid, str):
+                                            file_ids.add(fid)
+                                    else:
+                                        # Fallback if annotation exposes file_id directly
+                                        fid = getattr(ann, 'file_id', None)
+                                        if isinstance(fid, str):
+                                            file_ids.add(fid)
+                    # Some SDKs expose file citations at block level (rare)
+                    file_citation_block = getattr(block, 'file_citation', None)
+                    if file_citation_block:
+                        fid = getattr(file_citation_block, 'file_id', None)
+                        if isinstance(fid, str):
+                            file_ids.add(fid)
+                except Exception:
+                    continue
 
-            message_content.value += '\n\n' + '\n'.join(citations)
-            return message_content.value
+            # Strip inline citation markers like 【4:6†source】 and †source leftovers
+            try:
+                response = re.sub(r"【[^】]*】", "", response)
+                response = re.sub(r"†source", "", response, flags=re.IGNORECASE)
+            except Exception:
+                pass
+
+            if not response:
+                logger.warning("No text content found in assistant response.")
+                st.error("Ассистент жауап бере алмады немесе жауапта мәтін жоқ.")
+                return None
+
+            # Resolve file IDs to filenames
+            filenames = []
+            for fid in sorted(file_ids):
+                try:
+                    fobj = client.files.retrieve(fid)
+                    fname = getattr(fobj, 'filename', None) or fid
+                    filenames.append(fname)
+                except Exception:
+                    filenames.append(fid)
+
+            if filenames:
+                response += f"\n\n**📚 Дереккөздер:** {', '.join(dict.fromkeys(filenames))}"
+
+            logger.debug(f"Received response: {response[:100]}...")
+            return response
         except RateLimitError:
             if attempt < max_retries - 1:
                 time.sleep(retry_delay)
-                retry_delay *= 2  # Exponential backoff
+                retry_delay *= 2
             else:
+                logger.error("OpenAI rate limit exceeded")
                 st.error(
                     "Қате: OpenAI лимиті асып кетті. 2-3 минут күтіңіз немесе OpenAI есептік жазбаңызды тексеріңіз: https://platform.openai.com/account/usage")
                 return None
         except Exception as e:
+            logger.error(f"Ошибка отправки запроса: {str(e)}")
             st.error(f"Қате: {str(e)}")
             return None
-        time.sleep(5)  # Delay to avoid rapid requests
+        time.sleep(5)
+
+
+def login_page():
+    st.title("Кіру")
+    st.markdown("<div class='header-container'><h1>🧠 ЕНТ Көмекшісі</h1></div>", unsafe_allow_html=True)
+
+    # Вкладки для входа и регистрации
+    tab1, tab2 = st.tabs(["Кіру", "Тіркелу"])  # Анонимді кіру алынып тасталды
+
+    with tab1:
+        email = st.text_input("Email", key="login_email")
+        password = st.text_input("Құпия сөз", type="password", key="login_password")
+
+        if st.button("Кіру", key="login_button"):
+            user_id = sign_in(email, password)
+            if user_id:
+                st.session_state.user_id = user_id
+                st.success("Сәтті кірдіңіз!")
+                st.rerun()
+
+    with tab2:
+        reg_email = st.text_input("Email", key="register_email")
+        reg_password = st.text_input("Құпия сөз", type="password", key="register_password")
+        if st.button("Тіркелу", key="register_button"):
+            user_id = sign_up(reg_email, reg_password)
+            if user_id:
+                st.session_state.user_id = user_id
+                st.success("Сәтті тіркелдіңіз! Енді кіре аласыз.")
+                st.rerun()
+
+    # Анонимді кіру UI толық алынды
+
+    if st.button("Шығу", key="logout_button"):
+        sign_out()
+
 
 def main_page():
-    st.title("UBT-GPT")
-    # Сессия күйін инициализациялау
+    st.title("Басты бет")
+    st.write("Бұл ЕНТ-ға дайындыққа арналған қолданбаның басты беті.")
+    st.markdown(
+        "Мұнда сіз пәндер бойынша сұрақтар қойып, жауап ала аласыз немесе **Тест** және **Психолог** бөлімдерін таңдай аласыз.")
+
+    # Инициализация сессии
     if "main_chat_id" not in st.session_state:
-        chat_id, title, thread_id = create_new_main_chat()
+        chat_id, title, thread_id = create_new_main_chat(st.session_state.user_id)
         if chat_id is None:
             st.error("Жаңа чат құру мүмкін болмады. Supabase-те 'main_chats' таблицасы бар екеніне көз жеткізіңіз.")
+            logger.error("Failed to create new main chat")
             return
         st.session_state.main_chat_id = chat_id
         st.session_state.main_chat_title = title
         st.session_state.main_messages = []
         st.session_state.main_thread_id = thread_id
+        st.session_state.action_state = {"action": None, "chat_id": None}
+        logger.debug(f"Initialized session: chat_id={chat_id}, title={title}")
 
-    # CSS стилі
-    # CSS = """
-    # <style>
-    #     .stApp {
-    #         background-color: #000000;
-    #         color: #ffffff;
-    #         max-width: 1200px;
-    #         margin: 0 auto;
-    #         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    #     }
-    #     .css-1d391kg {
-    #         background-color: #1a1a1a !important;
-    #         border-right: 1px solid #444 !important;
-    #         padding: 1rem;
-    #     }
-    #     [data-testid="stSidebar"] {
-    #         width: 300px !important;
-    #         background-color: #1a1a1a !important;
-    #     }
-    #     .chat-history-item {
-    #         background-color: #00cc00 !important;
-    #         border: 1px solid #00b300 !important;
-    #         color: #ffffff !important;
-    #         padding: 10px;
-    #         margin: 5px 0;
-    #         border-radius: 8px;
-    #         cursor: pointer;
-    #         display: flex;
-    #         justify-content: space-between;
-    #         align-items: center;
-    #         transition: background-color 0.2s;
-    #     }
-    #     .chat-history-item:hover {
-    #         background-color: #00b300 !important;
-    #     }
-    #     .chat-history-item.active {
-    #         background-color: #00b300 !important;
-    #         border-color: #00a300 !important;
-    #     }
-    #     .chat-action-btn {
-    #         background: none;
-    #         border: none;
-    #         cursor: pointer;
-    #         padding: 5px;
-    #         color: #ccc !important;
-    #         font-size: 14px;
-    #     }
-    #     .chat-action-btn:hover {
-    #         color: #ffffff !important;
-    #     }
-    #     .new-chat-btn {
-    #         background-color: #00cc00 !important;
-    #         color: #ffffff !important;
-    #         border-radius: 8px;
-    #         padding: 10px;
-    #         text-align: center;
-    #         margin-bottom: 10px;
-    #         cursor: pointer;
-    #     }
-    #     .new-chat-btn:hover {
-    #         background-color: #00b300 !important;
-    #     }
-    #     .stChatMessage {
-    #         border-radius: 10px;
-    #         padding: 15px;
-    #         margin: 10px 0;
-    #         max-width: 80%;
-    #         background-color: #00cc00 !important;
-    #         color: #ffffff !important;
-    #     }
-    #     .stChatMessage.user {
-    #         margin-left: auto;
-    #     }
-    #     .stChatMessage.assistant {
-    #         margin-right: auto;
-    #         background-color: rgba(0, 204, 0, 0.2) !important;
-    #     }
-    #     .stChatInput {
-    #         position: fixed;
-    #         bottom: 20px;
-    #         width: calc(100% - 340px);
-    #         max-width: 800px;
-    #         left: 50%;
-    #         transform: translateX(-50%);
-    #         background-color: #1a1a1a !important;
-    #         border: 1px solid #444 !important;
-    #         border-radius: 20px;
-    #         padding: 10px;
-    #         color: #ffffff !important;
-    #     }
-    #     .stButton > button {
-    #         background-color: #00cc00 !important;
-    #         color: #ffffff !important;
-    #         border-radius: 8px;
-    #     }
-    #     .stButton > button:hover {
-    #         background-color: #00b300 !important;
-    #     }
-    #     .stTextInput > div > input {
-    #         background-color: #1a1a1a !important;
-    #         color: #ffffff !important;
-    #         border: 1px solid #444 !important;
-    #     }
-    #     .header-container {
-    #         display: flex;
-    #         justify-content: space-between;
-    #         align-items: center;
-    #         margin-bottom: 20px;
-    #     }
-    #     .header-container h1 {
-    #         margin: 0;
-    #         color: #ffffff !important;
-    #         background-color: #00cc00 !important;
-    #         padding: 5px 10px;
-    #         border-radius: 5px;
-    #     }
-    # </style>
-    # """
-    # st.markdown(CSS, unsafe_allow_html=True)
+    # Интерфейс
+    st.markdown(CSS, unsafe_allow_html=True)
+    st.markdown("<div class='header-container'><h1>🧠 ЕНТ Көмекшісі</h1></div>", unsafe_allow_html=True)
 
     # Бүйірлік панель
     with st.sidebar:
         st.markdown(
-            "<h2 style='text-align: center; color: #ffffff; background-color: #00cc00; padding: 5px; border-radius: 20px;'>💬 Чаттар</h2>",
+            "<h2 style='text-align: center; color: #ffffff; background-color: #00cc00; padding: 10px; border-radius: 8px;'>💬 Чаттар</h2>",
             unsafe_allow_html=True)
 
-        # Жаңа чат түймесі
-        if st.button("🆕Жаңа чат", key="new_main_chat", help="Жаңа чат бастау"):
-            chat_id, title, thread_id = create_new_main_chat()
+        # Жаңа чат
+        if st.button("🆕 Жаңа чат", key="new_main_chat"):
+            chat_id, title, thread_id = create_new_main_chat(st.session_state.user_id)
             if chat_id is None:
-                st.error("Жаңа чат құру мүмкін болмады. Supabase-те 'main_chats' таблицасы бар екеніне көз жеткізіңіз.")
+                st.error("Жаңа чат құру мүмкін болмады.")
+                logger.error("Failed to create new main chat")
                 return
             st.session_state.main_chat_id = chat_id
             st.session_state.main_chat_title = title
             st.session_state.main_messages = []
             st.session_state.main_thread_id = thread_id
+            st.session_state.action_state = {"action": None, "chat_id": None}
             st.rerun()
 
         # Чат тарихы
-        chat_files = load_main_chat_titles()
+        chat_files = load_main_chat_titles(st.session_state.user_id)
         for chat in chat_files:
             chat_id = chat["id"]
             chat_title = chat["title"]
@@ -312,32 +538,24 @@ def main_page():
             with st.container():
                 col1, col2, col3 = st.columns([3, 1, 1])
                 with col1:
-                    if st.button(chat_title, key=f"select_main_{chat_id}", help="Чатты ашу"):
+                    if st.button(chat_title, key=f"select_main_{chat_id}"):
                         st.session_state.main_chat_id = chat_id
                         st.session_state.main_chat_title = chat_title
-                        st.session_state.main_messages = load_main_chat(chat_id)
-                        thread_id = load_thread_id(chat_id)
-                        if not thread_id:
-                            try:
-                                thread_id = client.beta.threads.create().id
-                                save_thread_id(chat_id, thread_id)
-                            except Exception as e:
-                                st.error(f"Чат ағынын құру кезінде қате: {str(e)}")
-                                return
-                        st.session_state.main_thread_id = thread_id
+                        st.session_state.main_messages, st.session_state.main_thread_id = load_main_chat(chat_id)
+                        st.session_state.action_state = {"action": None, "chat_id": None}
                         st.rerun()
                 with col2:
-                    if st.button("✏️", key=f"rename_main_{chat_id}", help="Чат атауын өзгерту"):
-                        st.session_state.main_action_state = {"action": "rename", "chat_id": chat_id}
+                    if st.button("✏️", key=f"rename_main_{chat_id}"):
+                        st.session_state.action_state = {"action": "rename", "chat_id": chat_id}
                         st.rerun()
                 with col3:
-                    if st.button("🗑️", key=f"delete_main_{chat_id}", help="Чатты жою"):
-                        st.session_state.main_action_state = {"action": "delete", "chat_id": chat_id}
+                    if st.button("🗑️", key=f"delete_main_{chat_id}"):
+                        st.session_state.action_state = {"action": "delete", "chat_id": chat_id}
                         st.rerun()
 
-                # Атауды өзгерту немесе жою әрекеттерін өңдеу
-                if st.session_state.get("main_action_state", {}).get("chat_id") == chat_id:
-                    if st.session_state.main_action_state["action"] == "rename":
+                # Обработка действий
+                if st.session_state.action_state["chat_id"] == chat_id:
+                    if st.session_state.action_state["action"] == "rename":
                         new_name = st.text_input("Жаңа атау енгізіңіз:", key=f"rename_input_main_{chat_id}")
                         col_save, col_cancel = st.columns(2)
                         with col_save:
@@ -346,160 +564,135 @@ def main_page():
                                 if success:
                                     if chat_id == st.session_state.get("main_chat_id", ""):
                                         st.session_state.main_chat_title = result
-                                    st.session_state.main_action_state = {"action": None, "chat_id": None}
+                                    st.session_state.action_state = {"action": None, "chat_id": None}
                                     st.rerun()
                                 else:
                                     st.error(result)
                         with col_cancel:
                             if st.button("Болдырмау", key=f"cancel_rename_main_{chat_id}"):
-                                st.session_state.main_action_state = {"action": None, "chat_id": None}
+                                st.session_state.action_state = {"action": None, "chat_id": None}
                                 st.rerun()
-                    elif st.session_state.main_action_state["action"] == "delete":
+                    elif st.session_state.action_state["action"] == "delete":
                         st.warning(f"'{chat_title}' чатын жоюды растаңыз:")
                         col_confirm, col_cancel = st.columns(2)
                         with col_confirm:
                             if st.button("Иә, жою", key=f"confirm_delete_main_{chat_id}"):
                                 if delete_main_chat(chat_id):
                                     if chat_id == st.session_state.get("main_chat_id", ""):
-                                        chat_id, title, thread_id = create_new_main_chat()
+                                        chat_id, title, thread_id = create_new_main_chat(st.session_state.user_id)
                                         if chat_id is None:
-                                            st.error("Жаңа чат құру мүмкін болмады. Supabase-те 'main_chats' таблицасы бар екеніне көз жеткізіңіз.")
-                                        return
+                                            st.error("Жаңа чат құру мүмкін болмады.")
+                                            return
                                         st.session_state.main_chat_id = chat_id
                                         st.session_state.main_chat_title = title
                                         st.session_state.main_messages = []
                                         st.session_state.main_thread_id = thread_id
-                                    st.session_state.main_action_state = {"action": None, "chat_id": None}
+                                    st.session_state.action_state = {"action": None, "chat_id": None}
                                     st.rerun()
                                 else:
                                     st.error("Чатты жою кезінде қате шықты.")
                         with col_cancel:
                             if st.button("Жоқ", key=f"cancel_delete_main_{chat_id}"):
-                                st.session_state.main_action_state = {"action": None, "chat_id": None}
+                                st.session_state.action_state = {"action": None, "chat_id": None}
                                 st.rerun()
 
     # Негізгі мазмұн
-    user_id = "anonymous"  # Болашақта Supabase аутентификациясымен ауыстыруға болады
-    st.markdown("<h2 style='color: #ffffff; background-color: #00cc00; padding: 8px; border-radius: 8px;'>💬 Пәндер бойынша сұрақ-жауап</h2>", unsafe_allow_html=True)
+    subject = st.selectbox("Пәнді таңдаңыз", list(SUBJECTS.keys()), key="subject_select")
 
-    # Пән таңдау
-    subject = st.selectbox("Пәнді таңдаңыз!", list(SUBJECTS.keys()), key="main_subject_select")
-
-    # Таңдалған чаттың хабарламаларын көрсету
-    for msg in st.session_state.main_messages:
+    for msg in (st.session_state.main_messages or []):
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # Чат енгізу
-    user_input = st.chat_input("✍️ Сұрағыңызды енгізіңіз...", key="main_chat_input")
+    user_input = st.chat_input("Сұрағыңызды енгізіңіз...", key="main_input")
     if user_input:
-        # Пайдаланушы хабарламасын қосу
         st.session_state.main_messages.append({"role": "user", "content": user_input})
         with st.chat_message("user"):
             st.markdown(user_input)
 
         with st.spinner("Жауап дайындалуда..."):
-            # Алдыңғы хабарламаларды шектеу (соңғы 3 хабарлама)
-            previous_messages = "\n".join([f"{msg['role']}: {msg['content']}" for msg in st.session_state.main_messages[-3:]])
-            prompt = f"""
-Сен {subject} пәні бойынша тәжірибелі мұғалімсің. Пайдаланушының сұрағына қазақ тілінде нақты, түсінікті және оқулыққа сәйкес жауап бер.
-Векторлық қоймадан (ID: {SUBJECTS[subject]["vector_store_id"]}) тиісті ақпаратты пайдалан.
-Егер алдыңғы хабарламалар болса, оларды ескеріп, әңгімені жалғастыр.
-Алдыңғы хабарламалар: {previous_messages}
-Пайдаланушы сұрағы: {user_input}
-"""
-            answer = send_prompt(st.session_state.main_thread_id, prompt, subject)
-            if answer:
-                st.session_state.main_messages.append({"role": "assistant", "content": answer})
+            response = send_prompt(st.session_state.main_thread_id, user_input, subject)
+            if response:
+                st.session_state.main_messages.append({"role": "assistant", "content": response})
                 with st.chat_message("assistant"):
-                    st.markdown(answer)
-                # Чатты Supabase-те сақтау
+                    st.markdown(response)
+
+                # Автоматическое переименование после первого сообщения
+                if len(st.session_state.main_messages) == 2:
+                    new_title = generate_chat_title(user_input, subject)
+                    success, result = rename_main_chat(st.session_state.main_chat_id, new_title)
+                    if success:
+                        st.session_state.main_chat_title = result
+                        logger.debug(f"Chat renamed to {result}")
+
                 save_main_chat(
                     chat_id=st.session_state.main_chat_id,
-                    user_id=user_id,
+                    user_id=st.session_state.user_id,
                     messages=st.session_state.main_messages,
                     title=st.session_state.main_chat_title,
                     thread_id=st.session_state.main_thread_id
                 )
-            else:
-                # Fallback response if rate limit is hit
-                st.session_state.main_messages.append({
-                    "role": "assistant",
-                    "content": "Кешіріңіз, қазір жауап бере алмаймын. Лимитке жеттіңіз. 2-3 минут күтіңіз немесе OpenAI есептік жазбаңызды тексеріңіз: https://platform.openai.com/account/usage"
-                })
-                with st.chat_message("assistant"):
-                    st.markdown(st.session_state.main_messages[-1]["content"])
 
-def load_main_chat_titles():
+
+# Навигация
+def main():
+    st.set_page_config(page_title="ЕНТ Көмекшісі", layout="wide")
+
+    # Попытка восстановить сессию Supabase из сохраненных токенов
     try:
-        response = supabase.table("main_chats").select("id, title, created_at").execute()
-        return sorted(response.data, key=lambda x: x["created_at"], reverse=True)
+        access_token = st.session_state.get("sb_access_token")
+        refresh_token = st.session_state.get("sb_refresh_token")
+        if access_token and refresh_token:
+            try:
+                # set_session может обновить текущую сессию клиента
+                supabase.auth.set_session(access_token=access_token, refresh_token=refresh_token)
+                logger.debug("Supabase session restored from stored tokens")
+            except Exception as set_err:
+                logger.error(f"Failed to restore Supabase session: {set_err}")
     except Exception as e:
-        st.error(f"Чат тарихын жүктеу кезінде қате: {str(e)}")
-        return []
+        logger.error(f"Error accessing stored tokens: {e}")
 
-def load_main_chat(chat_id):
+    # Если user_id отсутствует, но пользователь в Supabase есть — заполним user_id
     try:
-        response = supabase.table("main_chats").select("messages").eq("id", chat_id).execute()
-        return response.data[0]["messages"] if response.data else []
+        existing_user = supabase.auth.get_user()
+        if existing_user and getattr(existing_user, "user", None) and not st.session_state.get("user_id"):
+            st.session_state.user_id = existing_user.user.id
+            logger.debug("Session user_id populated from Supabase user")
     except Exception as e:
-        st.error(f"Чатты жүктеу кезінде қате: {str(e)}")
-        return []
+        logger.debug(f"get_user pre-check failed (non-fatal): {e}")
 
-def load_thread_id(chat_id):
+    # Проверка авторизации
+    if "user_id" not in st.session_state or not st.session_state.user_id:
+        login_page()
+        return
+
+    # Проверка текущего пользователя
     try:
-        response = supabase.table("main_chats").select("thread_id").eq("id", chat_id).execute()
-        return response.data[0]["thread_id"] if response.data and response.data[0]["thread_id"] else None
+        user = supabase.auth.get_user()
+        if not user or not user.user:
+            st.error("Қолданушы авторизацияланбаған.")
+            logger.error("No authenticated user found")
+            login_page()
+            return
     except Exception as e:
-        st.error(f"Чат ағынын жүктеу кезінде қате: {str(e)}")
-        return None
+        logger.error(f"Error checking user authentication: {str(e)}")
+        st.error("Қолданушы авторизацияланбаған.")
+        login_page()
+        return
 
-def save_thread_id(chat_id, thread_id):
-    try:
-        supabase.table("main_chats").update({"thread_id": thread_id}).eq("id", chat_id).execute()
-    except Exception as e:
-        st.error(f"Чат ағынын сақтау кезінде қате: {str(e)}")
+    st.sidebar.markdown(f"Қош келдіңіз, {user.user.email}!")
+    if st.sidebar.button("Шығу", key="sidebar_logout"):
+        sign_out()
 
-def save_main_chat(chat_id: str, user_id: str, messages: list, title: str, thread_id: str):
-    try:
-        existing = supabase.table("main_chats").select("id").eq("id", chat_id).execute()
-        if existing.data:
-            supabase.table("main_chats").update({
-                "messages": messages,
-                "title": title,
-                "thread_id": thread_id
-            }).eq("id", chat_id).execute()
-        else:
-            supabase.table("main_chats").insert({
-                "id": chat_id,
-                "user_id": user_id,
-                "messages": messages,
-                "title": title,
-                "thread_id": thread_id,
-                "created_at": datetime.utcnow().isoformat()
-            }).execute()
-    except Exception as e:
-        st.error(f"Чатты сақтау кезінде қате: {str(e)}")
+    page = st.sidebar.selectbox("Бетті таңдаңыз", ["Басты бет", "Тест", "Психолог"], key="page_select")
+    logger.debug(f"Selected page: {page}")
 
-# ====== Сессия күйін инициализациялау ======
-if "action_state" not in st.session_state:
-    st.session_state.action_state = {"action": None, "chat_id": None}
-if "main_action_state" not in st.session_state:
-    st.session_state.main_action_state = {"action": None, "chat_id": None}
-if "psychology_chat_id" not in st.session_state:
-    chat_id, title = create_new_psychology_chat()
-    if chat_id is None:
-        st.error("Жаңа чат құру мүмкін болмады. Supabase-те 'psychology_chats' таблицасы бар екеніне көз жеткізіңіз.")
-        st.stop()
-    st.session_state.psychology_chat_id = chat_id
-    st.session_state.psychology_chat_title = title
-    st.session_state.psychology_messages = []
+    if page == "Басты бет":
+        main_page()
+    elif page == "Тест":
+        test_page()
+    elif page == "Психолог":
+        psychology_page()
 
-# ====== Беттерді анықтау ======
-main_page = st.Page(main_page, title="UBT-GPT🏆")
-test_page = st.Page(test_page, title="TEST📝")
-psychology_page = st.Page(psychology_page, title="NUR✨")
-nav = st.navigation([main_page, test_page, psychology_page])
 
-# ====== Навигация ======
-nav.run()
+if __name__ == "__main__":
+    main()
