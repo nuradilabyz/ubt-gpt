@@ -1,22 +1,36 @@
-# nur.py с исправлениями
 import streamlit as st
 from supabase import create_client, Client
+from typing import cast
 from datetime import datetime
 from openai import OpenAI, RateLimitError
 import uuid
 import time
 import os
 from dotenv import load_dotenv
+import logging
+
+# Настройка логирования
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 # Загружаем .env
 load_dotenv()
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+supabase_url_env = os.getenv("SUPABASE_URL")
+supabase_key_env = os.getenv("SUPABASE_KEY")
+openai_api_key_env = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=openai_api_key_env)
 
-# ====== Психологтың нұсқауы ======
+# Проверка переменных окружения
+if not all([supabase_url_env, supabase_key_env, openai_api_key_env]):
+    st.error("Қате: .env файлында айнымалылар анықталмаған.")
+    logger.error("Айнымалылар окружения отсутствуют.")
+    st.stop()
+
+SUPABASE_URL: str = cast(str, supabase_url_env)
+SUPABASE_KEY: str = cast(str, supabase_key_env)
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
 PSYCHOLOGY_PROMPT = """
 Сен ЕНТ-ға дайындалатын оқушыларға қолдау көрсететін достық психолог-консультантсың.
 Жауаптарың түсінікті, жанашыр және практикалық кеңестер беретін болуы керек.
@@ -26,49 +40,81 @@ PSYCHOLOGY_PROMPT = """
 Алдыңғы хабарламалар: {previous_messages}
 """
 
-# ====== Чатты басқару функциялары ======
-def load_psychology_chat_titles():
+# Упрощенный CSS
+CSS = """
+<style>
+    .stApp { background: #0b0b0f; color: #ffffff; max-width: 1200px; margin: 0 auto; font-family: Arial, sans-serif; }
+    [data-testid="stSidebar"] { width: 300px; background: #0f0f12; border-right: 1px solid #1c1c20; }
+    .chat-history-item { background: #17171b; border: 1px solid #22232a; color: #ffffff; padding: 10px; margin: 6px 0; border-radius: 8px; }
+    .chat-history-item:hover { background: #1e1e24; }
+    .chat-history-item.active { background: #1b1b20; border-color: #2a2b33; }
+    .stButton > button { background: #2c2d34; color: #fff; border-radius: 6px; }
+    .stButton > button:hover { background: #3a3b45; }
+    .stTextInput > div > input { background: #121216; color: #ffffff; border: 1px solid #23242b; }
+    .header-container h1 { color: #ffffff; background: transparent; padding: 4px 0; border-radius: 0; }
+</style>
+"""
+
+
+def load_psychology_chat_titles(user_id):
     try:
-        response = supabase.table("psychology_chats").select("id, title, created_at").execute()
+        response = supabase.table("psychology_chats").select("id, title, created_at").eq("user_id", user_id).execute()
         chats = sorted(response.data, key=lambda x: x["created_at"], reverse=True)
+        logger.debug(f"Loaded psychology chats for user {user_id}: {chats}")
         return chats
     except Exception as e:
+        logger.error(f"Ошибка загрузки чатов: {str(e)}")
         st.error(f"Чат тарихын жүктеу кезінде қате: {str(e)}")
         return []
+
 
 def load_psychology_chat(chat_id):
     try:
         response = supabase.table("psychology_chats").select("messages").eq("id", chat_id).execute()
         if response.data:
+            logger.debug(f"Loaded psychology chat {chat_id}: {response.data[0]}")
             return response.data[0]["messages"]
         return []
     except Exception as e:
+        logger.error(f"Ошибка загрузки чата {chat_id}: {str(e)}")
         st.error(f"Чатты жүктеу кезінде қате: {str(e)}")
         return []
 
-def save_psychology_chat(chat_id: str, user_id: str, messages: list, title: str):
+
+def save_psychology_chat(chat_id, user_id, messages, title):
     try:
         existing = supabase.table("psychology_chats").select("id").eq("id", chat_id).execute()
         if existing.data:
-            supabase.table("psychology_chats").update({"messages": messages, "title": title}).eq("id", chat_id).execute()
+            supabase.table("psychology_chats").update({
+                "messages": messages,
+                "title": title,
+                "updated_at": datetime.utcnow().isoformat()
+            }).eq("id", chat_id).execute()
         else:
             supabase.table("psychology_chats").insert({
                 "id": chat_id,
                 "user_id": user_id,
                 "messages": messages,
                 "title": title,
-                "created_at": datetime.utcnow().isoformat()
+                "created_at": datetime.utcnow().isoformat(),
+                "updated_at": datetime.utcnow().isoformat()
             }).execute()
+        logger.debug(f"Saved psychology chat {chat_id} with title {title}")
     except Exception as e:
+        logger.error(f"Ошибка сохранения чата {chat_id}: {str(e)}")
         st.error(f"Чатты сақтау кезінде қате: {str(e)}")
+
 
 def delete_psychology_chat(chat_id):
     try:
         response = supabase.table("psychology_chats").delete().eq("id", chat_id).execute()
+        logger.debug(f"Deleted psychology chat {chat_id}: {response.data}")
         return response.data is not None
     except Exception as e:
+        logger.error(f"Ошибка удаления чата {chat_id}: {str(e)}")
         st.error(f"Чатты жою кезінде қате: {str(e)}")
         return False
+
 
 def rename_psychology_chat(chat_id, new_name):
     if not new_name:
@@ -77,172 +123,103 @@ def rename_psychology_chat(chat_id, new_name):
         response = supabase.table("psychology_chats").select("id").eq("title", new_name).execute()
         if response.data:
             return False, "Бұл атаумен чат бар."
-        supabase.table("psychology_chats").update({"title": new_name}).eq("id", chat_id).execute()
+        supabase.table("psychology_chats").update({"title": new_name, "updated_at": datetime.utcnow().isoformat()}).eq(
+            "id", chat_id).execute()
+        logger.debug(f"Renamed psychology chat {chat_id} to {new_name}")
         return True, new_name
     except Exception as e:
+        logger.error(f"Ошибка переименования чата {chat_id}: {str(e)}")
         return False, f"Чат атауын өзгерту кезінде қате: {str(e)}"
 
-def create_new_psychology_chat():
+
+def create_new_psychology_chat(user_id):
     try:
         chat_id = str(uuid.uuid4())
-        title = datetime.now().strftime("%H:%M:%S")  # Изменено на час:минута:секунда для уникальности
+        title = "Жаңа чат"
+        supabase.table("psychology_chats").insert({
+            "id": chat_id,
+            "user_id": user_id,
+            "title": title,
+            "messages": [],
+            "created_at": datetime.utcnow().isoformat(),
+            "updated_at": datetime.utcnow().isoformat()
+        }).execute()
+        logger.debug(f"Created new psychology chat {chat_id} for user {user_id}")
         return chat_id, title
     except Exception as e:
+        logger.error(f"Ошибка создания чата: {str(e)}")
         st.error(f"Жаңа чат құру кезінде қате: {str(e)}")
         return None, None
 
-# ====== CSS ======
-# CSS = """
-# <style>
-#     .stApp {
-#         background-color: #000000;
-#         color: #ffffff;
-#         max-width: 1200px;
-#         margin: 0 auto;
-#         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-#     }
-#     .css-1d391kg {
-#         background-color: #1a1a1a !important;
-#         border-right: 1px solid #444 !important;
-#         padding: 1rem;
-#     }
-#     [data-testid="stSidebar"] {
-#         width: 300px !important;
-#         background-color: #1a1a1a !important;
-#     }
-#     .chat-history-item {
-#         background-color: #00cc00 !important;
-#         border: 1px solid #00b300 !important;
-#         color: #ffffff !important;
-#         padding: 10px;
-#         margin: 5px 0;
-#         border-radius: 8px;
-#         cursor: pointer;
-#         display: flex;
-#         justify-content: space-between;
-#         align-items: center;
-#         transition: background-color 0.2s;
-#     }
-#     .chat-history-item:hover {
-#         background-color: #00b300 !important;
-#     }
-#     .chat-history-item.active {
-#         background-color: #00b300 !important;
-#         border-color: #00a300 !important;
-#     }
-#     .chat-action-btn {
-#         background: none;
-#         border: none;
-#         cursor: pointer;
-#         padding: 5px;
-#         color: #ccc !important;
-#         font-size: 14px;
-#     }
-#     .chat-action-btn:hover {
-#         color: #ffffff !important;
-#     }
-#     .new-chat-btn {
-#         background-color: #00cc00 !important;
-#         color: #ffffff !important;
-#         border-radius: 8px;
-#         padding: 10px;
-#         text-align: center;
-#         margin-bottom: 10px;
-#         cursor: pointer;
-#     }
-#     .new-chat-btn:hover {
-#         background-color: #00b300 !important;
-#     }
-#     .stChatMessage {
-#         border-radius: 10px;
-#         padding: 15px;
-#         margin: 10px 0;
-#         max-width: 80%;
-#         background-color: #00cc00 !important;
-#         color: #ffffff !important;
-#     }
-#     .stChatMessage.user {
-#         margin-left: auto;
-#     }
-#     .stChatMessage.assistant {
-#         margin-right: auto;
-#         background-color: rgba(0, 204, 0, 0.2) !important;
-#     }
-#     .stChatInput {
-#         position: fixed;
-#         bottom: 20px;
-#         width: calc(100% - 340px);
-#         max-width: 800px;
-#         left: 50%;
-#         transform: translateX(-50%);
-#         background-color: #1a1a1a !important;
-#         border: 1px solid #444 !important;
-#         border-radius: 20px;
-#         padding: 10px;
-#         color: #ffffff !important;
-#     }
-#     .stButton > button {
-#         background-color: #00cc00 !important;
-#         color: #ffffff !important;
-#         border-radius: 8px;
-#     }
-#     .stButton > button:hover {
-#         background-color: #00b300 !important;
-#     }
-#     .stTextInput > div > input {
-#         background-color: #1a1a1a !important;
-#         color: #ffffff !important;
-#         border: 1px solid #444 !important;
-#     }
-#     .header-container {
-#         display: flex;
-#         justify-content: space-between;
-#         align-items: center;
-#         margin-bottom: 20px;
-#     }
-#     .header-container h1 {
-#         margin: 0;
-#         color: #ffffff !important;
-#         background-color: #00cc00 !important;
-#         padding: 5px 10px;
-#         border-radius: 5px;
-#     }
-# </style>
-# """
+
+def generate_chat_title(prompt):
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system",
+                 "content": "Сұрақ негізінде қазақ тілінде қысқа тақырыпты анықта (максимум 5 сөз). Формат: 'Психология - [Тақырып]'"},
+                {"role": "user", "content": f"Сұрақ: {prompt}"}
+            ],
+            temperature=0.5
+        )
+        content = response.choices[0].message.content
+        if content is None:
+            logger.warning("OpenAI тақырып контенті бос (None)")
+            return "Психология - Сұрақ"
+        title = content.strip()
+        logger.debug(f"Generated psychology chat title: {title}")
+        return title
+    except Exception as e:
+        logger.error(f"Ошибка генерации заголовка: {str(e)}")
+        return "Психология - Сұрақ"
+
 
 def psychology_page():
-    # ====== Сессия күйін инициализациялау ======
+    if "user_id" not in st.session_state or not st.session_state.user_id:
+        st.error("Сіз авторизациядан өтуіңіз керек!")
+        return
+
+    # Supabase сессиясын қалпына келтіруге тырысамыз (егер негізгі бетте сақталған болса)
+    try:
+        access_token = st.session_state.get("sb_access_token")
+        refresh_token = st.session_state.get("sb_refresh_token")
+        if access_token and refresh_token:
+            try:
+                # Restore session on the existing global client used below
+                supabase.auth.set_session(access_token=access_token, refresh_token=refresh_token)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
     if "action_state" not in st.session_state:
         st.session_state.action_state = {"action": None, "chat_id": None}
     if "psychology_chat_id" not in st.session_state:
-        chat_id, title = create_new_psychology_chat()
+        chat_id, title = create_new_psychology_chat(st.session_state.user_id)
         if chat_id is None:
-            st.error("Жаңа чат құру мүмкін болмады. Supabase-те 'psychology_chats' таблицасы бар екеніне көз жеткізіңіз.")
+            st.error(
+                "Жаңа чат құру мүмкін болмады. Supabase-те 'psychology_chats' таблицасы бар екеніне көз жеткізіңіз.")
+            logger.error("Failed to create new psychology chat")
             return
         st.session_state.psychology_chat_id = chat_id
         st.session_state.psychology_chat_title = title
         st.session_state.psychology_messages = []
+        logger.debug(f"Initialized psychology chat: {chat_id}")
 
-    st.title("SENIŃ NURYŃ✨")
-    # ====== Интерфейс ======
-    # st.markdown(unsafe_allow_html=True)
-    # st.markdown("""
-    # <div class="header-container">
-    #     <h1>🧠 ЕНТ Психолог-Көмекшісі</h1>
-    # </div>
-    # """, unsafe_allow_html=True)
+    st.markdown(CSS, unsafe_allow_html=True)
+    st.markdown("<div class='header-container'><h1>🧠 ЕНТ Психолог-Көмекшісі</h1></div>", unsafe_allow_html=True)
 
-    # ====== Бүйірлік панель ======
     with st.sidebar:
         st.markdown(
             "<h2 style='text-align: center; color: #ffffff; background-color: #00cc00; padding: 10px; border-radius: 8px;'>💬 Чаттар</h2>",
             unsafe_allow_html=True)
 
-        # Жаңа чат түймесі
-        if st.button("🆕 Жаңа чат", key="new_psychology_chat", help="Жаңа чат бастау"):
-            chat_id, title = create_new_psychology_chat()
+        if st.button("🆕 Жаңа чат", key="new_psychology_chat"):
+            chat_id, title = create_new_psychology_chat(st.session_state.user_id)
             if chat_id is None:
-                st.error("Жаңа чат құру мүмкін болмады. Supabase-те 'psychology_chats' таблицасы бар екеніне көз жеткізіңіз.")
+                st.error("Жаңа чат құру мүмкін болмады.")
+                logger.error("Failed to create new psychology chat")
                 return
             st.session_state.psychology_chat_id = chat_id
             st.session_state.psychology_chat_title = title
@@ -250,8 +227,7 @@ def psychology_page():
             st.session_state.action_state = {"action": None, "chat_id": None}
             st.rerun()
 
-        # Чат тарихы
-        chat_files = load_psychology_chat_titles()
+        chat_files = load_psychology_chat_titles(st.session_state.user_id)
         for chat in chat_files:
             chat_id = chat["id"]
             chat_title = chat["title"]
@@ -261,22 +237,21 @@ def psychology_page():
             with st.container():
                 col1, col2, col3 = st.columns([3, 1, 1])
                 with col1:
-                    if st.button(chat_title, key=f"select_psychology_{chat_id}", help="Чатты ашу"):
+                    if st.button(chat_title, key=f"select_psychology_{chat_id}"):
                         st.session_state.psychology_chat_id = chat_id
                         st.session_state.psychology_chat_title = chat_title
                         st.session_state.psychology_messages = load_psychology_chat(chat_id)
                         st.session_state.action_state = {"action": None, "chat_id": None}
                         st.rerun()
                 with col2:
-                    if st.button("✏️", key=f"rename_psychology_{chat_id}", help="Чат атауын өзгерту"):
+                    if st.button("✏️", key=f"rename_psychology_{chat_id}"):
                         st.session_state.action_state = {"action": "rename", "chat_id": chat_id}
                         st.rerun()
                 with col3:
-                    if st.button("🗑️", key=f"delete_psychology_{chat_id}", help="Чатты жою"):
+                    if st.button("🗑️", key=f"delete_psychology_{chat_id}"):
                         st.session_state.action_state = {"action": "delete", "chat_id": chat_id}
                         st.rerun()
 
-                # Атауды өзгерту немесе жою әрекеттерін өңдеу
                 if st.session_state.action_state["chat_id"] == chat_id:
                     if st.session_state.action_state["action"] == "rename":
                         new_name = st.text_input("Жаңа атау енгізіңіз:", key=f"rename_input_psychology_{chat_id}")
@@ -302,10 +277,10 @@ def psychology_page():
                             if st.button("Иә, жою", key=f"confirm_delete_psychology_{chat_id}"):
                                 if delete_psychology_chat(chat_id):
                                     if chat_id == st.session_state.get("psychology_chat_id", ""):
-                                        chat_id, title = create_new_psychology_chat()
+                                        chat_id, title = create_new_psychology_chat(st.session_state.user_id)
                                         if chat_id is None:
-                                            st.error("Жаңа чат құру мүмкін болмады. Supabase-те 'psychology_chats' таблицасы бар екеніне көз жеткізіңіз.")
-                                        return
+                                            st.error("Жаңа чат құру мүмкін болмады.")
+                                            return
                                         st.session_state.psychology_chat_id = chat_id
                                         st.session_state.psychology_chat_title = title
                                         st.session_state.psychology_messages = []
@@ -318,49 +293,108 @@ def psychology_page():
                                 st.session_state.action_state = {"action": None, "chat_id": None}
                                 st.rerun()
 
-    # ====== Негізгі мазмұн ======
-    user_id = "anonymous"  # Болашақта Supabase аутентификациясымен ауыстыруға болады
-
-    # Таңдалған чаттың хабарламаларын көрсету
-    for msg in st.session_state.psychology_messages:
+    # Негізгі мазмұн
+    for msg in (st.session_state.psychology_messages or []):
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # Чат енгізу
     user_input = st.chat_input("✍️ Жағдайды сипаттаңыз немесе сұрақ қойыңыз...", key="psychology_input")
     if user_input:
-        # Пайдаланушы хабарламасын қосу
         st.session_state.psychology_messages.append({"role": "user", "content": user_input})
         with st.chat_message("user"):
             st.markdown(user_input)
 
         with st.spinner("Кеңес дайындалуда..."):
             max_retries = 5
-            retry_delay = 10  # Initial delay in seconds
+            retry_delay = 10
             for attempt in range(max_retries):
                 try:
-                    # Алдыңғы хабарламаларды шектеу (соңғы 3 хабарлама)
-                    previous_messages = "\n".join([f"{msg['role']}: {msg['content']}" for msg in st.session_state.psychology_messages[-3:]])
-                    prompt = PSYCHOLOGY_PROMPT.format(previous_messages=previous_messages) + f"\nОқушының жағдайы: {user_input}"
+                    # Use psychology assistant with file search instead of regular GPT
+                    psychology_assistant_id = "asst_psychology_default"  # You'll need to create this assistant
 
-                    response = client.chat.completions.create(
-                        model="gpt-4o",
-                        messages=[
-                            {"role": "system", "content": "Сен тәжірибелі психологсың, оқушыларға кеңес бересің."},
-                            {"role": "user", "content": prompt}
-                        ],
-                        temperature=0.7
+                    # Create a new thread for this conversation
+                    thread = client.beta.threads.create()
+
+                    # Add user message to thread
+                    client.beta.threads.messages.create(
+                        thread_id=thread.id,
+                        role="user",
+                        content=user_input
                     )
 
-                    answer = response.choices[0].message.content
-                    st.session_state.psychology_messages.append({"role": "assistant", "content": answer})
-                    with st.chat_message("assistant"):
-                        st.markdown(answer)
+                    # Run the psychology assistant with file search
+                    run = client.beta.threads.runs.create(
+                        thread_id=thread.id,
+                        assistant_id=psychology_assistant_id,
+                        tools=[{"type": "file_search"}]
+                    )
 
-                    # Чатты Supabase-те сақтау
+                    # Wait for completion
+                    while run.status in ["queued", "in_progress"]:
+                        run = client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run.id)
+                        time.sleep(2)
+
+                    if run.status == "completed":
+                        # Get the response
+                        messages = client.beta.threads.messages.list(thread_id=thread.id, limit=1)
+                        response_content = messages.data[0].content
+
+                        # Extract text and sources
+                        answer_text = ""
+                        sources = set()
+
+                        for block in response_content:
+                            try:
+                                if hasattr(block, 'text') and getattr(block, 'text', None):
+                                    text_part = getattr(block, 'text', None)
+                                    if text_part and hasattr(text_part, 'value'):
+                                        value = getattr(text_part, 'value', None)
+                                        if isinstance(value, str):
+                                            answer_text += value
+                                elif hasattr(block, 'file_citation') and getattr(block, 'file_citation', None):
+                                    # Extract source information from file citations
+                                    file_citation = getattr(block, 'file_citation', None)
+                                    if file_citation:
+                                        file_id = getattr(file_citation, 'file_id', 'Unknown')
+                                        # Return the actual filename
+                                        sources.add(file_id)
+                            except Exception:
+                                # Skip blocks that can't be processed
+                                continue
+
+                        # Add file sources at the end
+                        if sources:
+                            answer_text += f"\n\n**📚 Дереккөздер:** {', '.join(sources)}"
+                        else:
+                            answer_text += f"\n\n**📚 Кітап:** Психология оқулығы"
+
+                        st.session_state.psychology_messages.append({"role": "assistant", "content": answer_text})
+                        with st.chat_message("assistant"):
+                            st.markdown(answer_text)
+
+                        # Clean up thread
+                        client.beta.threads.delete(thread.id)
+                    else:
+                        error_msg = f"Психология ассистенті жауап бере алмады: {run.status}"
+                        if hasattr(run, 'last_error') and run.last_error:
+                            error_msg += f" ({run.last_error.message})"
+                        st.error(error_msg)
+                        st.session_state.psychology_messages.append({"role": "assistant", "content": error_msg})
+                        with st.chat_message("assistant"):
+                            st.markdown(error_msg)
+                        # Clean up thread
+                        client.beta.threads.delete(thread.id)
+
+                    if len(st.session_state.psychology_messages) == 2:
+                        new_title = generate_chat_title(user_input)
+                        success, result = rename_psychology_chat(st.session_state.psychology_chat_id, new_title)
+                        if success:
+                            st.session_state.psychology_chat_title = result
+                            logger.debug(f"Psychology chat renamed to {result}")
+
                     save_psychology_chat(
                         chat_id=st.session_state.psychology_chat_id,
-                        user_id=user_id,
+                        user_id=st.session_state.user_id,
                         messages=st.session_state.psychology_messages,
                         title=st.session_state.psychology_chat_title
                     )
@@ -368,17 +402,20 @@ def psychology_page():
                 except RateLimitError:
                     if attempt < max_retries - 1:
                         time.sleep(retry_delay)
-                        retry_delay *= 2  # Exponential backoff
+                        retry_delay *= 2
                     else:
-                        st.error("Қате: OpenAI лимиті асып кетті. 2-3 минут күтіңіз немесе OpenAI есептік жазбаңызды тексеріңіз: https://platform.openai.com/account/usage")
+                        logger.error("OpenAI rate limit exceeded")
+                        st.error(
+                            "Қате: OpenAI лимиті асып кетті. 2-3 минут күтіңіз немесе OpenAI есептік жазбаңызды тексеріңіз: https://platform.openai.com/account/usage")
                         st.session_state.psychology_messages.append({
                             "role": "assistant",
-                            "content": "Кешіріңіз, қазір жауап бере алмаймын. Лимитке жеттіңіз. 2-3 минут күтіңіз немесе OpenAI есептік жазбаңызды тексеріңіз: https://platform.openai.com/account/usage"
+                            "content": "Кешіріңіз, қазір жауап бере алмаймын. Лимитке жеттіңіз."
                         })
                         with st.chat_message("assistant"):
                             st.markdown(st.session_state.psychology_messages[-1]["content"])
                         break
                 except Exception as e:
+                    logger.error(f"Ошибка обработки запроса: {str(e)}")
                     st.error(f"Қате: {str(e)}")
                     break
-                time.sleep(5)  # Delay to avoid rapid requests
+                time.sleep(5)
