@@ -11,6 +11,8 @@ import logging
 from datetime import datetime
 import uuid
 from subjects import SUBJECTS
+from base64 import b64encode
+import hashlib
 
 # Настройка логирования
 logging.basicConfig(level=logging.DEBUG)
@@ -34,7 +36,6 @@ SUPABASE_URL: str = cast(str, supabase_url_env)
 SUPABASE_KEY: str = cast(str, supabase_key_env)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-
 # SUBJECTS imported from subjects.py
 
 def clean_response(text):
@@ -55,7 +56,6 @@ def clean_response(text):
         logger.error(f"JSON decode error: {str(e)}")
         st.error(f"JSON пішімі қате: {str(e)}")
         return None
-
 
 def generate_batch(subject, batch_size=5):
     content = f"""
@@ -101,8 +101,7 @@ def generate_batch(subject, batch_size=5):
             response = client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system",
-                     "content": "Сен ЕНТ оқулықтарына негізделген сұрақтар генерациялайтын мұғалімсің."},
+                    {"role": "system", "content": "Сен ЕНТ оқулықтарына негізделген сұрақтар генерациялайтын мұғалімсің."},
                     {"role": "user", "content": content}
                 ],
                 temperature=0.7
@@ -123,15 +122,13 @@ def generate_batch(subject, batch_size=5):
                 retry_delay *= 2
             else:
                 logger.error("OpenAI rate limit exceeded")
-                st.error(
-                    "Қате: OpenAI лимиті асып кетті. 2-3 минут күтіңіз немесе OpenAI есептік жазбаңызды тексеріңіз: https://platform.openai.com/account/usage")
+                st.error("Қате: OpenAI лимиті асып кетті. 2-3 минут күтіңіз немесе OpenAI есептік жазбаңызды тексеріңіз: https://platform.openai.com/account/usage")
                 return []
         except Exception as e:
             logger.error(f"Ошибка генерации партии: {str(e)}")
             st.error(f"Партияны генерациялау кезінде қате: {str(e)}")
             return []
         time.sleep(5)
-
 
 def generate_test(subject):
     questions = []
@@ -193,7 +190,6 @@ def generate_test(subject):
     logger.debug(f"Generated test with {len(questions)} questions")
     return questions[:20]
 
-
 def load_test_chat_titles(user_id):
     try:
         response = supabase.table("test_chats").select("id, title, created_at").eq("user_id", user_id).execute()
@@ -204,7 +200,6 @@ def load_test_chat_titles(user_id):
         logger.error(f"Ошибка загрузки чатов: {str(e)}")
         st.error(f"Чат тарихын жүктеу кезінде қате: {str(e)}")
         return []
-
 
 def load_test_chat(chat_id):
     try:
@@ -217,7 +212,6 @@ def load_test_chat(chat_id):
         logger.error(f"Ошибка загрузки чата {chat_id}: {str(e)}")
         st.error(f"Чатты жүктеу кезінде қате: {str(e)}")
         return []
-
 
 def save_test_chat(chat_id, user_id, messages, title):
     try:
@@ -242,7 +236,6 @@ def save_test_chat(chat_id, user_id, messages, title):
         logger.error(f"Ошибка сохранения чата {chat_id}: {str(e)}")
         st.error(f"Чатты сақтау кезінде қате: {str(e)}")
 
-
 def delete_test_chat(chat_id):
     try:
         response = supabase.table("test_chats").delete().eq("id", chat_id).execute()
@@ -252,6 +245,9 @@ def delete_test_chat(chat_id):
         logger.error(f"Ошибка удаления чата {chat_id}: {str(e)}")
         st.error(f"Чатты жою кезінде қате: {str(e)}")
         return False
+
+
+
 
 
 def load_saved_test(chat_id):
@@ -287,7 +283,6 @@ def save_or_update_saved_test(chat_id, user_id, subject, test_json):
     except Exception as e:
         logger.error(f"Ошибка сохранения полного теста: {str(e)}")
 
-
 def rename_test_chat(chat_id, new_name):
     if not new_name:
         return False, "Жаңа атау бос болмауы керек."
@@ -295,14 +290,12 @@ def rename_test_chat(chat_id, new_name):
         response = supabase.table("test_chats").select("id").eq("title", new_name).execute()
         if response.data:
             return False, "Бұл атаумен чат бар."
-        supabase.table("test_chats").update({"title": new_name, "updated_at": datetime.utcnow().isoformat()}).eq("id",
-                                                                                                                 chat_id).execute()
+        supabase.table("test_chats").update({"title": new_name, "updated_at": datetime.utcnow().isoformat()}).eq("id", chat_id).execute()
         logger.debug(f"Renamed test chat {chat_id} to {new_name}")
         return True, new_name
     except Exception as e:
         logger.error(f"Ошибка переименования чата {chat_id}: {str(e)}")
         return False, f"Чат атауын өзгерту кезінде қате: {str(e)}"
-
 
 def create_new_test_chat(user_id):
     try:
@@ -338,14 +331,12 @@ def create_new_test_chat(user_id):
         st.error(f"Жаңа чат құру кезінде қате: {str(e)}")
         return None, None
 
-
 def generate_chat_title(prompt, subject):
     try:
         response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system",
-                 "content": "Сұрақ негізінде қазақ тілінде қысқа тақырыпты анықта (максимум 5 сөз). Формат: '[Пән] - [Тақырып]'"},
+                {"role": "system", "content": "Сұрақ негізінде қазақ тілінде қысқа тақырыпты анықта (максимум 5 сөз). Формат: '[Пән] - [Тақырып]'"},
                 {"role": "user", "content": f"Пән: {subject}\nСұрақ: {prompt}"}
             ],
             temperature=0.5
@@ -361,6 +352,26 @@ def generate_chat_title(prompt, subject):
         logger.error(f"Ошибка генерации заголовка: {str(e)}")
         return f"{subject} - Сұрақ"
 
+def extract_kazakh_text_from_image(image_bytes: bytes, mime_type: str = "image/png") -> str:
+    try:
+        data_url = f"data:{mime_type};base64,{b64encode(image_bytes).decode('utf-8')}"
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Суреттен қазақша мәтінді дәл шығарып бер. Тек мәтіннің өзін қайтар."},
+                        {"type": "image_url", "image_url": {"url": data_url}}
+                    ]
+                }
+            ],
+            temperature=0
+        )
+        content = resp.choices[0].message.content
+        return content.strip() if isinstance(content, str) else (content or "").strip()
+    except Exception:
+        return ""
 
 def test_page():
     if "user_id" not in st.session_state or not st.session_state.user_id:
@@ -414,21 +425,19 @@ def test_page():
     # CSS
     st.markdown("""
     <style>
-        .stApp { background: #0b0b0f; color: #ffffff; max-width: 1200px; margin: 0 auto; font-family: Arial, sans-serif; }
-        [data-testid=\"stSidebar\"] { width: 300px; background: #0f0f12; border-right: 1px solid #1c1c20; }
-        .chat-history-item { background: #17171b; border: 1px solid #22232a; color: #ffffff; padding: 10px; margin: 6px 0; border-radius: 8px; }
-        .chat-history-item:hover { background: #1e1e24; }
-        .chat-history-item.active { background: #1b1b20; border-color: #2a2b33; }
-        .stButton > button { background: #2c2d34; color: #fff; border-radius: 6px; }
-        .stButton > button:hover { background: #3a3b45; }
+        .stApp { color: #ffffff; max-width: 1200px; margin: 0 auto; font-family: Arial, sans-serif; }
+        [data-testid=\"stSidebar\"] { width: 300px; }
+        .chat-history-item { color: #ffffff; padding: 10px; margin: 6px 0; border-radius: 8px; }
+        .stButton > button { color: #ffffff; border-radius: 6px; }
+        .stTextInput > div > input { color: #ffffff; }
+        h1, h2, h3, h4, p, label { color: #ffffff; }
+        .stAlert, .stChatMessage, [data-baseweb=\"notification\"], .stTabs [data-baseweb=\"tab-highlight\"] { background: transparent !important; border: 0 !important; }
     </style>
     """, unsafe_allow_html=True)
 
     # Бүйірлік панель
     with st.sidebar:
-        st.markdown(
-            "<h2 style='text-align: center; color: #ffffff; background-color: #00cc00; padding: 10px; border-radius: 8px;'>💬 Тест чаттары</h2>",
-            unsafe_allow_html=True)
+        st.markdown("<h2 style='text-align: center; color: #ffffff;'>💬 Тест чаттары</h2>", unsafe_allow_html=True)
 
         if st.button("🆕 Жаңа тест чаты", key="new_test_chat"):
             chat_id, title = create_new_test_chat(st.session_state.user_id)
@@ -528,15 +537,17 @@ def test_page():
                                 st.rerun()
 
     # Негізгі мазмұн
-    st.title("Мектеп пәндері бойынша тесттер")
-
+    st.markdown("<h1 style='color: #ffffff;'>TEST📝</h1>", unsafe_allow_html=True)
+    st.markdown(
+    "<p style='color:#ffffff;'>Бұл бет <b>пәндер бойынша тест тапсырып</b>, содан кейін сол <b>тестер туралы сұрақтар</b> қою үшін арналған📝</p>",unsafe_allow_html=True)
+    
     # Show test status
     if st.session_state.get("current_test"):
         if st.session_state.get("test_submitted"):
             st.success("✅ Тест аяқталды - нәтижелерді көруге болады")
         else:
             st.info("📝 Тест жүріп жатыр - сұрақтарға жауап беріңіз")
-
+    
     subject = st.selectbox("Пәнді таңдаңыз", list(SUBJECTS.keys()), key="test_subject_select")
 
     # Show test creation button if no test exists, or show "Start New Test" if current test is completed
@@ -614,8 +625,135 @@ def test_page():
         with st.chat_message(msg.get("role", "assistant")):
             st.markdown(content)
 
-    user_input = st.chat_input("Тест бойынша сұрағыңызды енгізіңіз...",
-                               key=f"test_input_{st.session_state.test_chat_id}")
+    # Image inputs for test chat
+    # Camera controls placed above inputs
+    cam_flag_key = f"show_test_camera_{st.session_state.test_chat_id}"
+    if cam_flag_key not in st.session_state:
+        st.session_state[cam_flag_key] = False
+    cam_cols = st.columns([1, 1, 2])
+    with cam_cols[0]:
+        if not st.session_state.get(cam_flag_key):
+            if st.button("Open Camera", key=f"test_open_camera_{st.session_state.test_chat_id}"):
+                st.session_state[cam_flag_key] = True
+                st.rerun()
+        else:
+            if st.button("Close Camera", key=f"test_close_camera_{st.session_state.test_chat_id}"):
+                st.session_state[cam_flag_key] = False
+                st.rerun()
+
+    col_img1, col_img2 = st.columns(2)
+    with col_img1:
+        uploaded_img = st.file_uploader("Сурет жүктеу (JPEG/PNG)", type=["png", "jpg", "jpeg"], key=f"test_image_uploader_{st.session_state.test_chat_id}")
+    captured_img = None
+    with col_img2:
+        if st.session_state.get(cam_flag_key):
+            captured_img = st.camera_input("Камерадан түсіру", key=f"test_camera_{st.session_state.test_chat_id}")
+
+    # Auto-extract after upload or capture
+    img_obj = uploaded_img or captured_img
+    if img_obj is not None:
+        try:
+            image_bytes = img_obj.getvalue() if hasattr(img_obj, "getvalue") else img_obj.read()
+        except Exception:
+            image_bytes = None
+        mime_type = getattr(img_obj, "type", None) or "image/png"
+        if image_bytes:
+            try:
+                current_hash = hashlib.md5(image_bytes).hexdigest()
+            except Exception:
+                current_hash = None
+            last_hash_key = f"last_test_img_hash_{st.session_state.test_chat_id}"
+            last_hash = st.session_state.get(last_hash_key)
+            if current_hash and current_hash != last_hash:
+                st.session_state[last_hash_key] = current_hash
+                extracted_text = extract_kazakh_text_from_image(image_bytes, mime_type)
+                if extracted_text:
+                    st.session_state.test_messages.append({"role": "user", "content": extracted_text})
+                    with st.chat_message("user"):
+                        st.markdown(extracted_text)
+                    # continue with same assistant flow
+                    try:
+                        assistant_id = SUBJECTS[subject]["assistant_id"]
+                    except Exception:
+                        assistant_id = None
+                    if assistant_id:
+                        with st.spinner("Жауап дайындалуда..."):
+                            try:
+                                thread = client.beta.threads.create()
+                                client.beta.threads.messages.create(
+                                    thread_id=thread.id,
+                                    role="user",
+                                    content=extracted_text
+                                )
+                                run = client.beta.threads.runs.create(
+                                    thread_id=thread.id,
+                                    assistant_id=assistant_id,
+                                    tools=[{"type": "file_search"}]
+                                )
+                                while run.status in ["queued", "in_progress"]:
+                                    run = client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run.id)
+                                    time.sleep(2)
+                                if run.status == "completed":
+                                    messages = client.beta.threads.messages.list(thread_id=thread.id, limit=1)
+                                    response_content = messages.data[0].content
+                                    answer_text = ""
+                                    sources = set()
+                                    for block in response_content:
+                                        try:
+                                            if hasattr(block, 'text') and getattr(block, 'text', None):
+                                                text_part = getattr(block, 'text', None)
+                                                if text_part and hasattr(text_part, 'value'):
+                                                    value = getattr(text_part, 'value', None)
+                                                    if isinstance(value, str):
+                                                        answer_text += value
+                                                annotations = getattr(text_part, 'annotations', None)
+                                                if annotations:
+                                                    for ann in annotations:
+                                                        file_citation = getattr(ann, 'file_citation', None)
+                                                        if file_citation:
+                                                            fid = getattr(file_citation, 'file_id', None)
+                                                            if isinstance(fid, str):
+                                                                sources.add(fid)
+                                                        else:
+                                                            file_path = getattr(ann, 'file_path', None)
+                                                            if file_path:
+                                                                fid = getattr(file_path, 'file_id', None)
+                                                                if isinstance(fid, str):
+                                                                    sources.add(fid)
+                                                            else:
+                                                                fid = getattr(ann, 'file_id', None)
+                                                                if isinstance(fid, str):
+                                                                    sources.add(fid)
+                                            file_citation_block = getattr(block, 'file_citation', None)
+                                            if file_citation_block:
+                                                fid = getattr(file_citation_block, 'file_id', None)
+                                                if isinstance(fid, str):
+                                                    sources.add(fid)
+                                        except Exception:
+                                            continue
+                                    try:
+                                        answer_text = re.sub(r"【[^】]*】", "", answer_text)
+                                        answer_text = re.sub(r"†source", "", answer_text, flags=re.IGNORECASE)
+                                    except Exception:
+                                        pass
+                                    if sources:
+                                        filenames = []
+                                        for fid in sorted(sources):
+                                            try:
+                                                fobj = client.files.retrieve(fid)
+                                                fname = getattr(fobj, 'filename', None) or fid
+                                                filenames.append(fname)
+                                            except Exception:
+                                                filenames.append(fid)
+                                        answer_text += f"\n\n**📚 Дереккөздер:** {', '.join(dict.fromkeys(filenames))}"
+                                    st.session_state.test_messages.append({"role": "assistant", "content": answer_text})
+                                    with st.chat_message("assistant"):
+                                        st.markdown(answer_text)
+                                client.beta.threads.delete(thread.id)
+                            except Exception as e:
+                                st.error(f"Жауап алу кезінде қате: {str(e)}")
+
+    user_input = st.chat_input("Тест бойынша сұрағыңызды енгізіңіз...", key=f"test_input_{st.session_state.test_chat_id}")
     if user_input:
         st.session_state.test_messages.append({"role": "user", "content": user_input})
         with st.chat_message("user"):
@@ -625,38 +763,38 @@ def test_page():
             try:
                 # Use the subject-specific assistant with file search
                 assistant_id = SUBJECTS[subject]["assistant_id"]
-
+                
                 # Create a new thread for this conversation
                 thread = client.beta.threads.create()
-
+                
                 # Add user message to thread
                 client.beta.threads.messages.create(
                     thread_id=thread.id,
                     role="user",
                     content=user_input
                 )
-
+                
                 # Run the assistant with file search
                 run = client.beta.threads.runs.create(
                     thread_id=thread.id,
                     assistant_id=assistant_id,
                     tools=[{"type": "file_search"}]
                 )
-
+                
                 # Wait for completion
                 while run.status in ["queued", "in_progress"]:
                     run = client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run.id)
                     time.sleep(2)
-
+                
                 if run.status == "completed":
                     # Get the response
                     messages = client.beta.threads.messages.list(thread_id=thread.id, limit=1)
                     response_content = messages.data[0].content
-
+                    
                     # Extract text and sources
                     answer_text = ""
                     sources = set()
-
+                    
                     for block in response_content:
                         try:
                             if hasattr(block, 'text') and getattr(block, 'text', None):
@@ -693,14 +831,14 @@ def test_page():
                         except Exception:
                             # Skip blocks that can't be processed
                             continue
-
+                    
                     # Strip inline citation markers like 【4:6†source】 and †source
                     try:
                         answer_text = re.sub(r"【[^】]*】", "", answer_text)
                         answer_text = re.sub(r"†source", "", answer_text, flags=re.IGNORECASE)
                     except Exception:
                         pass
-
+                    
                     # Resolve file IDs to filenames and append
                     if sources:
                         filenames = []
@@ -714,7 +852,7 @@ def test_page():
                         answer_text += f"\n\n**📚 Дереккөздер:** {', '.join(dict.fromkeys(filenames))}"
                     else:
                         answer_text += f"\n\n**📚 Дереккөз:** {subject} оқулығы"
-
+                    
                     st.session_state.test_messages.append({"role": "assistant", "content": answer_text})
                     with st.chat_message("assistant"):
                         st.markdown(answer_text)
@@ -724,10 +862,10 @@ def test_page():
                         error_msg += f" ({run.last_error.message})"
                     st.error(error_msg)
                     st.session_state.test_messages.append({"role": "assistant", "content": error_msg})
-
+                
                 # Clean up thread
                 client.beta.threads.delete(thread.id)
-
+                
             except Exception as e:
                 error_msg = f"Жауап алу кезінде қате: {str(e)}"
                 st.error(error_msg)
@@ -757,7 +895,7 @@ def test_page():
         if not st.session_state.get("test_submitted"):
             for i, question in enumerate(current_test):
                 st.write(f"**{i + 1}. {question['text']}**")
-
+                
                 # Show radio buttons for answering
                 answer = st.radio(
                     f"{i + 1} сұраққа жауап таңдаңыз",
@@ -771,8 +909,7 @@ def test_page():
         user_answers = st.session_state.get("user_answers") or {}
         # Use a JSON-based representation to avoid mixed-type key sort errors
         try:
-            normalized_answers_repr = json.dumps({str(k): user_answers.get(k) for k in user_answers}, sort_keys=True,
-                                                 ensure_ascii=False)
+            normalized_answers_repr = json.dumps({str(k): user_answers.get(k) for k in user_answers}, sort_keys=True, ensure_ascii=False)
         except Exception:
             normalized_answers_repr = str(user_answers)
         if st.session_state.get("last_saved_answers_repr") != normalized_answers_repr:
@@ -797,21 +934,17 @@ def test_page():
             st.markdown("---")
             st.markdown("## 🎯 Тест аяқталды!")
             st.markdown("### 📊 Сіздің нәтижелеріңіз:")
-            st.markdown(
-                f"**Ұпай: {test_results.get('score', 0)} / {test_results.get('total', len(current_test))} ({test_results.get('score', 0) / test_results.get('total', len(current_test)) * 100:.1f}%)**")
+            st.markdown(f"**Ұпай: {test_results.get('score', 0)} / {test_results.get('total', len(current_test))} ({test_results.get('score', 0) / test_results.get('total', len(current_test)) * 100:.1f}%)**")
             st.markdown("---")
-
+            
             for idx, _ in enumerate(current_test):
                 result = test_results.get("results", [])[idx]
                 status = "✅ Дұрыс" if result["is_correct"] else "❌ Қате"
                 status_color = "green" if result["is_correct"] else "red"
-
+                
                 st.markdown(f"### {idx + 1}. {result['question']}")
-                st.markdown(
-                    f"**Сіздің жауабыңыз:** <span style='color: {status_color};'>{result['user_answer']}</span>",
-                    unsafe_allow_html=True)
-                st.markdown(f"**Дұрыс жауап:** <span style='color: green;'>{result['correct_answer']}</span>",
-                            unsafe_allow_html=True)
+                st.markdown(f"**Сіздің жауабыңыз:** <span style='color: {status_color};'>{result['user_answer']}</span>", unsafe_allow_html=True)
+                st.markdown(f"**Дұрыс жауап:** <span style='color: green;'>{result['correct_answer']}</span>", unsafe_allow_html=True)
                 st.markdown(f"**Күй:** {status}")
                 st.markdown(f"**Контекст:** {result['context']}")
                 st.markdown(f"**Түсініктеме:** {result['explanation']}")
@@ -874,10 +1007,10 @@ def test_page():
                     st.rerun()  # Force rerun to show results immediately
             else:
                 st.warning("Барлық сұрақтарға жауап беріңіз!")
-    else:
-        # Test is completed - show completion message and option to start new test
-        st.info("🎯 Бұл тест аяқталды. Сіз тек нәтижелерді көре аласыз.")
-
+        else:
+            # Test is completed - show completion message and option to start new test
+            st.info("🎯 Бұл тест аяқталды. Сіз тек нәтижелерді көре аласыз.")
+        
         col1, col2 = st.columns([1, 1])
         with col1:
             if st.button("🆕 Жаңа тест бастау", key="start_new_test"):
