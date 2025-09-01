@@ -21,6 +21,9 @@ supabase_key_env = os.getenv("SUPABASE_KEY")
 openai_api_key_env = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=openai_api_key_env)
 
+# Optional: dedicated Assistant ID for psychology chat
+PSYCHOLOGY_ASSISTANT_ID = os.getenv("PSYCHOLOGY_ASSISTANT_ID", "").strip()
+
 # Проверка переменных окружения
 if not all([supabase_url_env, supabase_key_env, openai_api_key_env]):
     st.error("Қате: .env файлында айнымалылар анықталмаған.")
@@ -302,87 +305,111 @@ def psychology_page():
             retry_delay = 10
             for attempt in range(max_retries):
                 try:
-                    # Use psychology assistant with file search instead of regular GPT
-                    psychology_assistant_id = "asst_psychology_default"  # You'll need to create this assistant
-                    
-                    # Create a new thread for this conversation
-                    thread = client.beta.threads.create()
-                    
-                    # Add user message to thread
-                    client.beta.threads.messages.create(
-                        thread_id=thread.id,
-                        role="user",
-                        content=user_input
-                    )
-                    
-                    # Run the psychology assistant with file search
-                    run = client.beta.threads.runs.create(
-                        thread_id=thread.id,
-                        assistant_id=psychology_assistant_id,
-                        tools=[{"type": "file_search"}]
-                    )
-                    
-                    # Wait for completion
-                    while run.status in ["queued", "in_progress"]:
-                        run = client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run.id)
-                        time.sleep(2)
-                    
-                    if run.status == "completed":
-                        # Get the response
-                        messages = client.beta.threads.messages.list(thread_id=thread.id, limit=1)
-                        response_content = messages.data[0].content
-                        
-                        # Extract text and sources
-                        answer_text = ""
-                        sources = set()
-                        
-                        for block in response_content:
+                    # Prefer Assistant API if configured, otherwise fall back to Chat Completions
+                    psychology_assistant_id = PSYCHOLOGY_ASSISTANT_ID
+
+                    if psychology_assistant_id:
+                        # Create a new thread for this conversation
+                        thread = client.beta.threads.create()
+
+                        # Add user message to thread
+                        client.beta.threads.messages.create(
+                            thread_id=thread.id,
+                            role="user",
+                            content=user_input
+                        )
+
+                        # Run the psychology assistant with file search
+                        run = client.beta.threads.runs.create(
+                            thread_id=thread.id,
+                            assistant_id=psychology_assistant_id,
+                            tools=[{"type": "file_search"}]
+                        )
+
+                        # Wait for completion
+                        while run.status in ["queued", "in_progress"]:
+                            run = client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run.id)
+                            time.sleep(2)
+
+                        if run.status == "completed":
+                            # Get the response
+                            messages = client.beta.threads.messages.list(thread_id=thread.id, limit=1)
+                            response_content = messages.data[0].content
+
+                            # Extract text and sources
+                            answer_text = ""
+                            sources = set()
+
+                            for block in response_content:
+                                try:
+                                    if hasattr(block, 'text') and getattr(block, 'text', None):
+                                        text_part = getattr(block, 'text', None)
+                                        if text_part and hasattr(text_part, 'value'):
+                                            value = getattr(text_part, 'value', None)
+                                            if isinstance(value, str):
+                                                answer_text += value
+                                    elif hasattr(block, 'file_citation') and getattr(block, 'file_citation', None):
+                                        # Extract source information from file citations
+                                        file_citation = getattr(block, 'file_citation', None)
+                                        if file_citation:
+                                            file_id = getattr(file_citation, 'file_id', 'Unknown')
+                                            sources.add(file_id)
+                                except Exception:
+                                    continue
+
+                            # Add file sources at the end (if available)
+                            if sources:
+                                answer_text += f"\n\n**📚 Дереккөздер:** {', '.join(sources)}"
+
+                            st.session_state.psychology_messages.append({"role": "assistant", "content": answer_text})
+                            with st.chat_message("assistant"):
+                                st.markdown(answer_text)
+
+                            # Clean up thread
                             try:
-                                if hasattr(block, 'text') and getattr(block, 'text', None):
-                                    text_part = getattr(block, 'text', None)
-                                    if text_part and hasattr(text_part, 'value'):
-                                        value = getattr(text_part, 'value', None)
-                                        if isinstance(value, str):
-                                            answer_text += value
-                                elif hasattr(block, 'file_citation') and getattr(block, 'file_citation', None):
-                                    # Extract source information from file citations
-                                    file_citation = getattr(block, 'file_citation', None)
-                                    if file_citation:
-                                        file_id = getattr(file_citation, 'file_id', 'Unknown')
-                                        # Return the actual filename
-                                        sources.add(file_id)
+                                client.beta.threads.delete(thread.id)
                             except Exception:
-                                # Skip blocks that can't be processed
-                                continue
-                        
-                        # Add file sources at the end
-                        if sources:
-                            answer_text += f"\n\n**📚 Дереккөздер:** {', '.join(sources)}"
+                                pass
                         else:
-                            answer_text += f"\n\n**📚 Кітап:** Психология оқулығы"
-                        
+                            error_msg = f"Психология ассистенті жауап бере алмады: {run.status}"
+                            if hasattr(run, 'last_error') and run.last_error:
+                                error_msg += f" ({run.last_error.message})"
+                            st.error(error_msg)
+                            st.session_state.psychology_messages.append({"role": "assistant", "content": error_msg})
+                            with st.chat_message("assistant"):
+                                st.markdown(error_msg)
+                            try:
+                                client.beta.threads.delete(thread.id)
+                            except Exception:
+                                pass
+                    else:
+                        # Fallback to standard Chat Completions with a psychology-specific system prompt
+                        previous_text = "\n".join(
+                            [f"{m['role']}: {m['content']}" for m in (st.session_state.psychology_messages or []) if m.get('role') in ("user", "assistant")][-10:]
+                        )
+                        system_prompt = PSYCHOLOGY_PROMPT.format(previous_messages=previous_text)
+
+                        completion = client.chat.completions.create(
+                            model="gpt-4o-mini",
+                            messages=[
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_input},
+                            ],
+                            temperature=0.7,
+                        )
+                        answer_text = completion.choices[0].message.content or "Кешіріңіз, қазір жауап бере алмадым. Қайта көріңіз."
+                        answer_text = answer_text.strip()
+
                         st.session_state.psychology_messages.append({"role": "assistant", "content": answer_text})
                         with st.chat_message("assistant"):
                             st.markdown(answer_text)
-                        
-                        # Clean up thread
-                        client.beta.threads.delete(thread.id)
-                    else:
-                        error_msg = f"Психология ассистенті жауап бере алмады: {run.status}"
-                        if hasattr(run, 'last_error') and run.last_error:
-                            error_msg += f" ({run.last_error.message})"
-                        st.error(error_msg)
-                        st.session_state.psychology_messages.append({"role": "assistant", "content": error_msg})
-                        with st.chat_message("assistant"):
-                            st.markdown(error_msg)
-                        # Clean up thread
-                        client.beta.threads.delete(thread.id)
 
                     if len(st.session_state.psychology_messages) == 2:
                         new_title = generate_chat_title(user_input)
                         success, result = rename_psychology_chat(st.session_state.psychology_chat_id, new_title)
                         if success:
                             st.session_state.psychology_chat_title = result
+                            st.session_state["psychology_title_renamed"] = True
                             logger.debug(f"Psychology chat renamed to {result}")
 
                     save_psychology_chat(
@@ -391,6 +418,10 @@ def psychology_page():
                         messages=st.session_state.psychology_messages,
                         title=st.session_state.psychology_chat_title
                     )
+                    # If title was just renamed, rerun to refresh sidebar immediately
+                    if st.session_state.get("psychology_title_renamed"):
+                        st.session_state.pop("psychology_title_renamed", None)
+                        st.rerun()
                     break
                 except RateLimitError:
                     if attempt < max_retries - 1:
@@ -407,7 +438,37 @@ def psychology_page():
                             st.markdown(st.session_state.psychology_messages[-1]["content"])
                         break
                 except Exception as e:
-                    logger.error(f"Ошибка обработки запроса: {str(e)}")
-                    st.error(f"Қате: {str(e)}")
-                    break
+                    # If Assistant flow failed (e.g., invalid assistant id), try a one-time fallback to Chat Completions
+                    try:
+                        previous_text = "\n".join(
+                            [f"{m['role']}: {m['content']}" for m in (st.session_state.psychology_messages or []) if m.get('role') in ("user", "assistant")][-10:]
+                        )
+                        system_prompt = PSYCHOLOGY_PROMPT.format(previous_messages=previous_text)
+
+                        completion = client.chat.completions.create(
+                            model="gpt-4o-mini",
+                            messages=[
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_input},
+                            ],
+                            temperature=0.7,
+                        )
+                        answer_text = completion.choices[0].message.content or "Кешіріңіз, қазір жауап бере алмадым. Қайта көріңіз."
+                        answer_text = answer_text.strip()
+
+                        st.session_state.psychology_messages.append({"role": "assistant", "content": answer_text})
+                        with st.chat_message("assistant"):
+                            st.markdown(answer_text)
+
+                        save_psychology_chat(
+                            chat_id=st.session_state.psychology_chat_id,
+                            user_id=st.session_state.user_id,
+                            messages=st.session_state.psychology_messages,
+                            title=st.session_state.psychology_chat_title
+                        )
+                        break
+                    except Exception as e2:
+                        logger.error(f"Ошибка обработки запроса: {str(e)}; fallback failed: {str(e2)}")
+                        st.error(f"Қате: {str(e)}")
+                        break
                 time.sleep(5)
