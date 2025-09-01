@@ -250,6 +250,18 @@ def delete_test_chat(chat_id):
 
 
 
+def cleanup_empty_test_chats(user_id):
+    try:
+        resp = supabase.table("test_chats").select("id, messages").eq("user_id", user_id).execute()
+        for row in (resp.data or []):
+            msgs = row.get("messages") or []
+            if not msgs:
+                try:
+                    supabase.table("test_chats").delete().eq("id", row.get("id")).execute()
+                except Exception:
+                    continue
+    except Exception as e:
+        logger.debug(f"Test chat cleanup skipped: {e}")
 def load_saved_test(chat_id):
     try:
         response = supabase.table("saved_tests").select("test_json").eq("id", chat_id).execute()
@@ -393,6 +405,10 @@ def test_page():
 
     if "action_state" not in st.session_state:
         st.session_state.action_state = {"action": None, "chat_id": None}
+    try:
+        cleanup_empty_test_chats(st.session_state.user_id)
+    except Exception:
+        pass
     if "test_chat_id" not in st.session_state:
         chat_id, title = create_new_test_chat(st.session_state.user_id)
         if chat_id is None:
@@ -440,6 +456,11 @@ def test_page():
         st.markdown("<h2 style='text-align: center; color: #ffffff;'>💬 Тест чаттары</h2>", unsafe_allow_html=True)
 
         if st.button("🆕 Жаңа тест чаты", key="new_test_chat"):
+            try:
+                if st.session_state.get("test_chat_id") and len(st.session_state.get("test_messages") or []) == 0:
+                    delete_test_chat(st.session_state.get("test_chat_id"))
+            except Exception:
+                pass
             chat_id, title = create_new_test_chat(st.session_state.user_id)
             if chat_id is None:
                 st.error("Жаңа чат құру мүмкін болмады.")
