@@ -4,6 +4,7 @@ from openai import OpenAI, RateLimitError
 from test import test_page
 from nur import psychology_page, create_new_psychology_chat
 from subjects import SUBJECTS
+from feedback import feedback_page
 import uuid
 from datetime import datetime
 import time
@@ -14,7 +15,6 @@ import logging
 import re
 import base64
 import hashlib
-from summary import summary_page as render_summary_page
 
 # Настройка логирования
 logging.basicConfig(level=logging.DEBUG)
@@ -142,6 +142,9 @@ def sign_out():
         # Clear persisted auth tokens
         st.session_state.pop("sb_access_token", None)
         st.session_state.pop("sb_refresh_token", None)
+        # Clear post-signup flags
+        st.session_state.pop("just_registered", None)
+        st.session_state.pop("just_registered_email", None)
         st.rerun()
     except Exception as e:
         logger.error(f"Sign-out error: {str(e)}")
@@ -452,6 +455,15 @@ def login_page():
     st.title("Кіру")
     st.markdown("<div class='header-container'><h1>🧠 UBT-GPT</h1></div>", unsafe_allow_html=True)
 
+    # After successful registration, show confirmation notice and keep user on login
+    if st.session_state.get("just_registered"):
+        reg_email_info = st.session_state.get("just_registered_email")
+        info_msg = "Тіркелу сәтті аяқталды. Email-ді растаңыз"
+        if reg_email_info:
+            info_msg += f" ({reg_email_info})"
+        info_msg += " және содан кейін кіріңіз."
+        st.info(info_msg)
+
     # Вкладки для входа и регистрации
     tab1, tab2 = st.tabs(["Кіру", "Тіркелу"])  # Анонимді кіру алынып тасталды
 
@@ -463,6 +475,9 @@ def login_page():
             user_id = sign_in(email, password)
             if user_id:
                 st.session_state.user_id = user_id
+                # Clear post-signup flags if present
+                st.session_state.pop("just_registered", None)
+                st.session_state.pop("just_registered_email", None)
                 st.success("Сәтті кірдіңіз!")
                 st.rerun()
 
@@ -472,8 +487,9 @@ def login_page():
         if st.button("Тіркелу", key="register_button"):
             user_id = sign_up(reg_email, reg_password)
             if user_id:
-                st.session_state.user_id = user_id
-                st.success("Сәтті тіркелдіңіз! Енді кіре аласыз.")
+                # Do not set user_id here; Supabase may require email confirmation
+                st.session_state["just_registered"] = True
+                st.session_state["just_registered_email"] = reg_email
                 st.rerun()
 
     # Анонимді кіру UI толық алынды
@@ -538,20 +554,30 @@ def main_page():
     cam_cols = st.columns([1, 1, 2])
     with cam_cols[0]:
         if not st.session_state.get("show_main_camera"):
-            if st.button("Open Camera", key="main_open_camera"):
+            if st.button("Камераны ашу", key="main_open_camera"):
                 st.session_state["show_main_camera"] = True
                 st.rerun()
         else:
-            if st.button("Close Camera", key="main_close_camera"):
+            if st.button("Камераны жабу", key="main_close_camera"):
                 st.session_state["show_main_camera"] = False
                 st.rerun()
 
-    col_img1, col_img2 = st.columns(2)
+    # Make camera bigger when open by widening its column
+    if st.session_state.get("show_main_camera"):
+        col_img1, col_img2 = st.columns([1, 3])
+    else:
+        col_img1, col_img2 = st.columns([1, 1])
     with col_img1:
         uploaded_img = st.file_uploader("Сурет жүктеу (JPEG/PNG)", type=["png", "jpg", "jpeg"], key="main_image_uploader")
     captured_img = None
     with col_img2:
         if st.session_state.get("show_main_camera"):
+            # Inline close (X) button for camera
+            x_cols = st.columns([0.85, 0.15])
+            with x_cols[1]:
+                if st.button("✖️", key="main_camera_close_x"):
+                    st.session_state["show_main_camera"] = False
+                    st.rerun()
             captured_img = st.camera_input("Камерадан түсіру", key="main_camera")
 
     # Auto-extract after upload or capture
@@ -671,7 +697,7 @@ def main():
     if st.sidebar.button("Шығу", key="sidebar_logout"):
         sign_out()
 
-    page = st.sidebar.selectbox("Бетті таңдаңыз", ["UBT-GPT🏆", "TEST📝", "NUR✨", "SUMMARY📚"], key="page_select")
+    page = st.sidebar.selectbox("Бетті таңдаңыз", ["UBT-GPT🏆", "TEST📝", "NUR✨", "Кері байланыс"], key="page_select")
     logger.debug(f"Selected page: {page}")
 
     if page == "UBT-GPT🏆":
@@ -680,8 +706,8 @@ def main():
         test_page()
     elif page == "NUR✨":
         psychology_page()
-    elif page == "SUMMARY📚":
-        render_summary_page(supabase)
+    elif page == "Кері байланыс":
+        feedback_page()
 
 
 if __name__ == "__main__":
