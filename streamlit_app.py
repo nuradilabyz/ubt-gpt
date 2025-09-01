@@ -537,6 +537,76 @@ def main_page():
             st.session_state.action_state = {"action": None, "chat_id": None}
             st.rerun()
 
+        # Чаттар тізімі: таңдау/қайта атау/жою
+        chat_files = load_main_chat_titles(st.session_state.user_id)
+        for chat in chat_files:
+            chat_id = chat["id"]
+            chat_title = chat["title"]
+            active = chat_id == st.session_state.get("main_chat_id", "")
+            css_class = "chat-history-item active" if active else "chat-history-item"
+
+            with st.container():
+                col1, col2, col3 = st.columns([3, 1, 1])
+                with col1:
+                    if st.button(chat_title, key=f"select_main_{chat_id}"):
+                        st.session_state.main_chat_id = chat_id
+                        st.session_state.main_chat_title = chat_title
+                        messages, thread_id = load_main_chat(chat_id)
+                        st.session_state.main_messages = messages or []
+                        st.session_state.main_thread_id = thread_id
+                        st.session_state.action_state = {"action": None, "chat_id": None}
+                        st.rerun()
+                with col2:
+                    if st.button("✏️", key=f"rename_main_{chat_id}"):
+                        st.session_state.action_state = {"action": "rename", "chat_id": chat_id}
+                        st.rerun()
+                with col3:
+                    if st.button("🗑️", key=f"delete_main_{chat_id}"):
+                        st.session_state.action_state = {"action": "delete", "chat_id": chat_id}
+                        st.rerun()
+
+                if st.session_state.action_state["chat_id"] == chat_id:
+                    if st.session_state.action_state["action"] == "rename":
+                        new_name = st.text_input("Жаңа атау енгізіңіз:", key=f"rename_input_main_{chat_id}")
+                        col_save, col_cancel = st.columns(2)
+                        with col_save:
+                            if st.button("Сақтау", key=f"save_rename_main_{chat_id}"):
+                                success, result = rename_main_chat(chat_id, new_name)
+                                if success:
+                                    if chat_id == st.session_state.get("main_chat_id", ""):
+                                        st.session_state.main_chat_title = result
+                                    st.session_state.action_state = {"action": None, "chat_id": None}
+                                    st.rerun()
+                                else:
+                                    st.error(result)
+                        with col_cancel:
+                            if st.button("Болдырмау", key=f"cancel_rename_main_{chat_id}"):
+                                st.session_state.action_state = {"action": None, "chat_id": None}
+                                st.rerun()
+                    elif st.session_state.action_state["action"] == "delete":
+                        st.warning(f"'{chat_title}' чатын жоюды растаңыз:")
+                        col_confirm, col_cancel = st.columns(2)
+                        with col_confirm:
+                            if st.button("Иә, жою", key=f"confirm_delete_main_{chat_id}"):
+                                if delete_main_chat(chat_id):
+                                    if chat_id == st.session_state.get("main_chat_id", ""):
+                                        new_id, new_title, new_thread = create_new_main_chat(st.session_state.user_id)
+                                        if new_id is None:
+                                            st.error("Жаңа чат құру мүмкін болмады.")
+                                            return
+                                        st.session_state.main_chat_id = new_id
+                                        st.session_state.main_chat_title = new_title
+                                        st.session_state.main_messages = []
+                                        st.session_state.main_thread_id = new_thread
+                                    st.session_state.action_state = {"action": None, "chat_id": None}
+                                    st.rerun()
+                                else:
+                                    st.error("Чатты жою кезінде қате шықты.")
+                        with col_cancel:
+                            if st.button("Жоқ", key=f"cancel_delete_main_{chat_id}"):
+                                st.session_state.action_state = {"action": None, "chat_id": None}
+                                st.rerun()
+
     # Негізгі интерфейс стилі
     st.markdown(CSS, unsafe_allow_html=True)
 
@@ -614,6 +684,13 @@ def main_page():
                                 title=st.session_state.main_chat_title,
                                 thread_id=st.session_state.main_thread_id
                             )
+                            # After first exchange, rename and refresh
+                            if len(st.session_state.main_messages) == 2:
+                                new_title = generate_chat_title(extracted_text, subject)
+                                success, result = rename_main_chat(st.session_state.main_chat_id, new_title)
+                                if success:
+                                    st.session_state.main_chat_title = result
+                                    st.rerun()
                 else:
                     st.error("Мәтін табылмады. Басқа ракурс/сапалы сурет жүктеп көріңіз.")
 
@@ -636,6 +713,7 @@ def main_page():
                     success, result = rename_main_chat(st.session_state.main_chat_id, new_title)
                     if success:
                         st.session_state.main_chat_title = result
+                        st.session_state["main_title_renamed"] = True
                         logger.debug(f"Chat renamed to {result}")
 
                 save_main_chat(
@@ -645,6 +723,10 @@ def main_page():
                     title=st.session_state.main_chat_title,
                     thread_id=st.session_state.main_thread_id
                 )
+                # Refresh immediately if title was renamed
+                if st.session_state.get("main_title_renamed"):
+                    st.session_state.pop("main_title_renamed", None)
+                    st.rerun()
 
 
 # Навигация
