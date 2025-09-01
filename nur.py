@@ -111,6 +111,19 @@ def delete_psychology_chat(chat_id):
         st.error(f"Чатты жою кезінде қате: {str(e)}")
         return False
 
+def cleanup_empty_psychology_chats(user_id):
+    try:
+        resp = supabase.table("psychology_chats").select("id, messages").eq("user_id", user_id).execute()
+        for row in (resp.data or []):
+            msgs = row.get("messages") or []
+            if not msgs:
+                try:
+                    supabase.table("psychology_chats").delete().eq("id", row.get("id")).execute()
+                except Exception:
+                    continue
+    except Exception as e:
+        logger.debug(f"Psychology chat cleanup skipped: {e}")
+
 def rename_psychology_chat(chat_id, new_name):
     if not new_name:
         return False, "Жаңа атау бос болмауы керек."
@@ -187,6 +200,10 @@ def psychology_page():
 
     if "action_state" not in st.session_state:
         st.session_state.action_state = {"action": None, "chat_id": None}
+    try:
+        cleanup_empty_psychology_chats(st.session_state.user_id)
+    except Exception:
+        pass
     if "psychology_chat_id" not in st.session_state:
         chat_id, title = create_new_psychology_chat(st.session_state.user_id)
         if chat_id is None:
@@ -212,6 +229,11 @@ def psychology_page():
         st.markdown("<h2 style='text-align: center; color: #ffffff;'>💬 Чаттар</h2>", unsafe_allow_html=True)
 
         if st.button("🆕 Жаңа чат", key="new_psychology_chat"):
+            try:
+                if st.session_state.get("psychology_chat_id") and len(st.session_state.get("psychology_messages") or []) == 0:
+                    delete_psychology_chat(st.session_state.get("psychology_chat_id"))
+            except Exception:
+                pass
             chat_id, title = create_new_psychology_chat(st.session_state.user_id)
             if chat_id is None:
                 st.error("Жаңа чат құру мүмкін болмады.")
