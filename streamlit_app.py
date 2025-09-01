@@ -296,6 +296,23 @@ def create_new_main_chat(user_id):
         return None, None, None
 
 
+def cleanup_empty_main_chats(user_id):
+    try:
+        resp = supabase.table("main_chats").select("id, messages").eq("user_id", user_id).execute()
+        for row in (resp.data or []):
+            try:
+                msgs = row.get("messages") or []
+            except Exception:
+                msgs = []
+            if not msgs:
+                try:
+                    supabase.table("main_chats").delete().eq("id", row.get("id")).execute()
+                except Exception:
+                    continue
+    except Exception as e:
+        logger.debug(f"Main chat cleanup skipped: {e}")
+
+
 def generate_chat_title(prompt, subject):
     try:
         response = client.chat.completions.create(
@@ -504,6 +521,10 @@ def main_page():
         "Мұнда сіз пәндер бойынша сұрақтар қойып, жауап ала аласыз немесе **TEST📝** және **NUR✨** бөлімдерін таңдай аласыз.")
 
     # Инициализация сессии
+    try:
+        cleanup_empty_main_chats(st.session_state.user_id)
+    except Exception:
+        pass
     if "main_chat_id" not in st.session_state:
         chat_id, title, thread_id = create_new_main_chat(st.session_state.user_id)
         if chat_id is None:
@@ -525,6 +546,11 @@ def main_page():
 
         # Жаңа чат
         if st.button("🆕 Жаңа чат", key="new_main_chat"):
+            try:
+                if st.session_state.get("main_chat_id") and len(st.session_state.get("main_messages") or []) == 0:
+                    delete_main_chat(st.session_state.get("main_chat_id"))
+            except Exception:
+                pass
             chat_id, title, thread_id = create_new_main_chat(st.session_state.user_id)
             if chat_id is None:
                 st.error("Жаңа чат құру мүмкін болмады.")
