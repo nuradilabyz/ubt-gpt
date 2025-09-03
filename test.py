@@ -38,6 +38,228 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # SUBJECTS imported from subjects.py
 
+def get_current_user_id():
+    try:
+        auth_user_resp = supabase.auth.get_user()
+        if auth_user_resp and getattr(auth_user_resp, "user", None):
+            user_id = auth_user_resp.user.id
+            logger.debug(f"Got user_id from Supabase auth: {user_id}")
+            return user_id
+    except Exception as e:
+        logger.debug(f"Error getting user from Supabase auth: {e}")
+    session_user_id = st.session_state.get("user_id")
+    logger.debug(f"Got user_id from session state: {session_user_id}")
+    return session_user_id
+
+def canonical_subject(subject: str) -> str:
+    try:
+        canonical = " ".join((subject or "").strip().split())
+        logger.debug(f"Canonical subject: '{subject}' -> '{canonical}'")
+        return canonical
+    except Exception as e:
+        logger.error(f"Error canonicalizing subject '{subject}': {e}")
+        return subject or ""
+
+def normalize_text(value: str) -> str:
+    try:
+        return " ".join((value or "").strip().split())
+    except Exception:
+        return value or ""
+
+def normalize_question_text(text: str) -> str:
+    try:
+        t = (text or "").lower()
+        t = re.sub(r"<[^>]+>", " ", t)          # remove HTML tags
+        t = re.sub(r"\*|_|`|#{1,6}", " ", t)    # strip markdown markers
+        t = re.sub(r"[^\w\sқғүұәіңһөҚҒҮҰӘІҢҺӨ]", " ", t)  # keep letters/digits/underscore/space (kk friendly)
+        t = re.sub(r"\s+", " ", t).strip()
+        logger.debug(f"Normalized text: '{text}' -> '{t}'")
+        return t
+    except Exception as e:
+        logger.error(f"Error normalizing text '{text}': {e}")
+        return normalize_text(text or "").lower()
+
+def create_unique_question_key(question: dict) -> str:
+    """
+    Создает абсолютно уникальный ключ для вопроса на основе:
+    1. Текст вопроса (нормализованный)
+    2. Варианты ответов (нормализованные)
+    3. Правильный ответ
+    4. Название книги
+    5. Страница
+    """
+    import hashlib
+    import json
+    
+    try:
+        # Извлекаем все важные данные
+        text = question.get("text", "")
+        options = question.get("options", [])
+        correct_option = question.get("correct_option", 0)
+        book_title = question.get("book_title", "")
+        page = question.get("page", "")
+        
+        # Нормализуем текст вопроса
+        norm_text = normalize_question_text(text)
+        
+        # Нормализуем варианты ответов
+        norm_options = []
+        for opt in options:
+            norm_opt = normalize_question_text(opt)
+            norm_options.append(norm_opt)
+        
+        # Нормализуем название книги и страницу
+        norm_book = normalize_question_text(book_title)
+        norm_page = normalize_question_text(page)
+        
+        # Создаем уникальную строку из всех компонентов
+        unique_string = f"{norm_text}|{json.dumps(norm_options, ensure_ascii=False, sort_keys=True)}|{correct_option}|{norm_book}|{norm_page}"
+        
+        # Генерируем SHA256 хеш
+        key = hashlib.sha256(unique_string.encode("utf-8")).hexdigest()
+        
+        logger.debug(f"Generated UNIQUE question key:")
+        logger.debug(f"  Text: '{text[:50]}...'")
+        logger.debug(f"  Options: {len(options)} items")
+        logger.debug(f"  Correct: {correct_option}")
+        logger.debug(f"  Book: '{book_title}'")
+        logger.debug(f"  Page: '{page}'")
+        logger.debug(f"  Key: {key}")
+        
+        return key
+        
+    except Exception as e:
+        logger.error(f"Error creating unique question key: {e}")
+        # Fallback to simple text-based key
+        return question_key_from_text(question.get("text", ""))
+
+def question_key_from_text(text: str) -> str:
+    """
+    Простой ключ только по тексту (для обратной совместимости)
+    """
+    import hashlib
+    norm = normalize_question_text(text)
+    key = hashlib.sha256(norm.encode("utf-8")).hexdigest()
+    logger.debug(f"Generated simple question key: '{text}' -> '{key}'")
+    return key
+
+def compute_question_hash(question: dict) -> str:
+    # Use the new unique key generation
+    return create_unique_question_key(question)
+
+def get_solved_keys(subject: str) -> set:
+    user_id = get_current_user_id()
+    keys: set[str] = set()
+    if not user_id:
+        logger.warning(f"No user_id found for getting solved keys for subject: {subject}")
+        return keys
+    try:
+        subj = canonical_subject(subject)
+        logger.info(f"=== FETCHING SOLVED KEYS for user_id={user_id}, subject='{subj}' ===")
+        resp = supabase.table("user_correct_answers").select("question_key").eq("user_id", user_id).eq("subject", subj).execute()
+        db_keys = set()
+        for row in (resp.data or []):
+            qk = row.get("question_key")
+            if isinstance(qk, str):
+                db_keys.add(qk)
+        logger.info(f"Found {len(db_keys)} solved keys in database for subject '{subj}': {list(db_keys)[:5]}...")
+        keys.update(db_keys)
+    except Exception as e:
+        logger.error(f"Error fetching solved keys from database: {e}")
+    # merge with local session cache to be robust if network write/read lags
+    try:
+        cache_key = f"excluded_keys_cache_{subject}"
+        cached = st.session_state.get(cache_key) or set()
+        if isinstance(cached, set):
+            logger.info(f"Adding {len(cached)} keys from session cache for subject '{subject}'")
+            keys |= cached
+    except Exception as e:
+        logger.error(f"Error accessing session cache: {e}")
+    logger.info(f"TOTAL solved keys for subject '{subject}': {len(keys)}")
+    return keys
+
+from datetime import datetime as _dt
+
+def save_results(subject: str, questions: list, results: dict):
+    user_id = get_current_user_id()
+    if not user_id:
+        logger.warning("No user_id found for saving results")
+        return
+    try:
+        now_iso = _dt.utcnow().isoformat()
+        subj = canonical_subject(subject)
+        logger.info(f"=== SAVING RESULTS for user_id={user_id}, subject='{subj}' ===")
+        attempts = []
+        correct_rows = []
+        newly_excluded = set()
+        for idx, q in enumerate(questions or []):
+            q_text = q.get("text", "")
+            qkey = create_unique_question_key(q)  # Use unique key generation
+            try:
+                res = (results or {}).get("results", [])[idx]
+            except Exception:
+                res = None
+            is_correct = bool(res and res.get("is_correct"))
+            logger.info(f"Question {idx}: '{q_text[:50]}...' -> UNIQUE key: {qkey}, correct: {is_correct}")
+            attempts.append({
+                "user_id": user_id,
+                "subject": subj,
+                "question_key": qkey,
+                "is_correct": is_correct,
+            })
+            if is_correct:
+                correct_rows.append({
+                    "user_id": user_id,
+                    "subject": subj,
+                    "question_key": qkey,
+                    "first_answered_at": now_iso,
+                    "last_answered_at": now_iso,
+                    "times_correct": 1,
+                })
+                newly_excluded.add(qkey)
+        if attempts:
+            try:
+                supabase.table("user_attempts").insert(attempts).execute()
+                logger.debug(f"Saved {len(attempts)} attempts to user_attempts")
+            except Exception as e:
+                logger.error(f"Error saving attempts: {e}")
+        if correct_rows:
+            try:
+                # Prefer upsert if available
+                supabase.table("user_correct_answers").upsert(correct_rows, on_conflict="user_id,subject,question_key").execute()
+                logger.info(f"Upserted {len(correct_rows)} correct answers to user_correct_answers")
+            except Exception as e:
+                logger.error(f"Upsert failed, trying insert/update: {e}")
+                # Fallback: insert then update on conflict
+                for row in correct_rows:
+                    try:
+                        supabase.table("user_correct_answers").insert(row).execute()
+                        logger.debug(f"Inserted correct answer: {row['question_key']}")
+                    except Exception as insert_err:
+                        logger.debug(f"Insert failed, trying update: {insert_err}")
+                        try:
+                            supabase.table("user_correct_answers").update({
+                                "last_answered_at": now_iso,
+                            }).match({
+                                "user_id": row["user_id"],
+                                "subject": row["subject"],
+                                "question_key": row["question_key"],
+                            }).execute()
+                            logger.debug(f"Updated existing correct answer: {row['question_key']}")
+                        except Exception as update_err:
+                            logger.error(f"Update also failed: {update_err}")
+        # update local cache of excluded keys
+        if newly_excluded:
+            cache_key = f"excluded_keys_cache_{subj}"
+            cached = st.session_state.get(cache_key) or set()
+            if not isinstance(cached, set):
+                cached = set()
+            cached |= newly_excluded
+            st.session_state[cache_key] = cached
+            logger.info(f"Updated session cache with {len(newly_excluded)} new excluded keys")
+    except Exception as e:
+        logger.error(f"Error in save_results: {e}")
+
 def clean_response(text):
     try:
         text = re.sub(r'```json\s*|\s*```', '', text, flags=re.MULTILINE)
@@ -57,7 +279,7 @@ def clean_response(text):
         st.error(f"JSON пішімі қате: {str(e)}")
         return None
 
-def generate_batch(subject, batch_size=5):
+def generate_batch(subject, batch_size=5, exclusion_texts=None):
     content = f"""
 {subject} пәні бойынша {batch_size} сұрақты көп таңдаулы түрде қазақ тілінде генерациялаңыз, ЕНТ оқулықтарына сәйкес.
 
@@ -93,6 +315,53 @@ def generate_batch(subject, batch_size=5):
    ]
 4. Тексеру: дәл {batch_size} сұрақ, деректер ЕНТ оқулықтарына сәйкес, бет, контекст және түсініктеме оқулық мазмұнына дәл сәйкес болуы керек.
 """
+
+    # Append explicit exclusion list to the prompt to prevent repeats
+    try:
+        if exclusion_texts:
+            items = []
+            seen_items = set()
+            total_chars = 0
+            # Limit the total size of exclusion section
+            for t in exclusion_texts:
+                if not isinstance(t, str):
+                    continue
+                tx = " ".join((t or "").strip().split())
+                if not tx:
+                    continue
+                if tx in seen_items:
+                    continue
+                if total_chars + len(tx) > 12000:
+                    break
+                items.append(tx)
+                seen_items.add(tx)
+                total_chars += len(tx)
+            if items:
+                exclusion_section = (
+                    "ЕСКЕРТУ: Төмендегі сұрақтарға оқушы БҰРЫН ДҰРЫС жауап берген. "
+                    "Осы сұрақтарды және олардың мағыналық жақын нұсқаларын ҚОСПАҢЫЗ. "
+                    "ТЕК ЖАҢА СҰРАҚТАР ҚҰРЫҢЫЗ.\n"
+                    "NOTE: The student has ALREADY ANSWERED the following questions CORRECTLY. "
+                    "Do NOT include these or near-duplicates. Generate ONLY NEW questions.\n"
+                    "ALREADY_ANSWERED_QUESTIONS_JSON:\n"
+                )
+                exclusion_section += json.dumps(items, ensure_ascii=False, indent=2) + "\n\n"
+                exclusion_section += (
+                    "STRICT RULES:\n"
+                    "- Do NOT include any question whose 'text' is identical to, a paraphrase of, or contains major overlapping phrases/terms with any item in ALREADY_ANSWERED_QUESTIONS_JSON.\n"
+                    f"- Return exactly {batch_size} NEW questions. If any candidate violates this rule, regenerate it until all {batch_size} are valid.\n"
+                    "- Avoid reusing the same book_title and page pairing for near-identical facts as listed above.\n\n"
+                )
+                content = exclusion_section + content
+                logger.debug(f"Included {len(items)} exclusion items into the prompt")
+    except Exception as e:
+        logger.debug(f"Failed to add exclusion list to prompt: {e}")
+
+    # Log final prompt content to terminal when creating the test
+    try:
+        logger.info("=== FINAL PROMPT CONTENT (generate_batch) ===\n" + content)
+    except Exception:
+        pass
 
     max_retries = 5
     retry_delay = 10
@@ -138,13 +407,35 @@ def generate_test(subject):
     if f"cached_test_{subject}" not in st.session_state:
         st.session_state[f"cached_test_{subject}"] = []
 
+    subj = canonical_subject(subject)
+    logger.debug(f"=== GENERATING TEST FOR SUBJECT: '{subj}' ===")
+    
+    # Fetch solved canonical keys for this user+subject and track per-batch seen
+    solved_text_keys = get_solved_keys(subj)
+    # Fetch exclusion texts from saved tests for this user/subject to guide the model
+    exclusion_texts = []
+    try:
+        exclusion_texts = fetch_exclusion_texts(subj, solved_text_keys, max_items=2000)
+        logger.debug(f"Fetched {len(exclusion_texts)} exclusion texts from saved_tests")
+    except Exception as e:
+        logger.debug(f"Exclusion texts fetch failed: {e}")
+    seen_text_keys = set()
+    excluded_session = st.session_state.get(f"excluded_keys_cache_{subj}") or set()
+    if isinstance(excluded_session, set):
+        solved_text_keys |= excluded_session
+    logger.debug(f"Total solved keys to exclude: {len(solved_text_keys)}")
+    logger.debug(f"Sample solved keys: {list(solved_text_keys)[:3]}")
+
     while len(questions) < 20 and attempts < max_attempts:
         try:
-            batch_questions = generate_batch(subject, batch_size=5)
+            batch_questions = generate_batch(subject, batch_size=5, exclusion_texts=exclusion_texts)
             if not batch_questions:
                 attempts += 1
                 time.sleep(3)
                 continue
+            before_cnt = len(batch_questions)
+            logger.debug(f"Generated batch of {before_cnt} questions")
+            
             for q in batch_questions:
                 required_fields = ["text", "options", "correct_option", "book_title", "page", "context", "explanation"]
                 if not all(key in q for key in required_fields):
@@ -171,9 +462,27 @@ def generate_test(subject):
                     logger.error(f"Missing explanation: {q}")
                     st.error(f"Түсініктеме жоқ: {q}")
                     continue
+                
+                q_text = q.get("text", "")
+                q_key = create_unique_question_key(q)  # Use unique key generation
+                logger.debug(f"Checking question: '{q_text[:50]}...' -> UNIQUE key: {q_key}")
+                
+                if q_key in solved_text_keys:
+                    logger.debug(f"SKIPPING - Question already solved: {q_key}")
+                    continue
+                if q_key in seen_text_keys:
+                    logger.debug(f"SKIPPING - Question already in current batch: {q_key}")
+                    continue
                 if q not in questions and q not in st.session_state[f"cached_test_{subject}"]:
                     questions.append(q)
+                    seen_text_keys.add(q_key)
                     st.session_state[f"cached_test_{subject}"].append(q)
+                    logger.debug(f"ADDED question: {q_key}")
+                else:
+                    logger.debug(f"SKIPPING - Question already in test or cache")
+                    
+            after_cnt = len(questions)
+            logger.debug(f"Batch processing: {before_cnt} candidates -> {after_cnt} total questions so far")
             attempts += 1
             time.sleep(5)
         except Exception as e:
@@ -183,11 +492,14 @@ def generate_test(subject):
             time.sleep(5)
 
     if len(questions) < 20:
-        logger.error(f"Generated only {len(questions)} questions instead of 20")
-        st.error(f"20 сұрақтың орнына тек {len(questions)} сұрақ құрылды.")
+        logger.error(f"Generated only {len(questions)} questions instead of 20 (subject={subj})")
+        if len(questions) == 0:
+            st.info("Бұл пән бойынша жаңа сұрақтар қалған жоқ. Қателеріңізді қайталап шығыңыз.")
+        else:
+            st.error(f"20 сұрақтың орнына тек {len(questions)} сұрақ құрылды.")
         return questions
 
-    logger.debug(f"Generated test with {len(questions)} questions")
+    logger.debug(f"=== FINAL TEST GENERATED: {len(questions)} questions ===")
     return questions[:20]
 
 def load_test_chat_titles(user_id):
@@ -294,6 +606,61 @@ def save_or_update_saved_test(chat_id, user_id, subject, test_json):
         logger.debug(f"Saved full test payload for chat {chat_id}")
     except Exception as e:
         logger.error(f"Ошибка сохранения полного теста: {str(e)}")
+        
+def fetch_exclusion_texts(subject: str, solved_keys: set, max_items: int = 100) -> list[str]:
+    """
+    Возвращает список текстов вопросов, которые пользователь уже решил правильно
+    (по их ключам), извлекая их из сохранённых тестов в таблице saved_tests.
+    Эти тексты добавляются в промпт как список исключений для GPT.
+    """
+    texts: list[str] = []
+    if not solved_keys:
+        return texts
+    user_id = get_current_user_id()
+    if not user_id:
+        return texts
+    subj = canonical_subject(subject)
+    try:
+        # Читаем недавние сохранённые тесты для пользователя и предмета
+        resp = (
+            supabase
+            .table("saved_tests")
+            .select("test_json")
+            .eq("user_id", user_id)
+            .eq("subject", subj)
+            .order("updated_at", desc=True)
+            .limit(min(max_items, 1000))
+            .execute()
+        )
+        seen_keys = set()
+        for row in (resp.data or []):
+            payload = row.get("test_json")
+            try:
+                # В некоторых драйверах это может быть строка
+                if isinstance(payload, str):
+                    payload = json.loads(payload)
+            except Exception:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            questions = payload.get("questions") or []
+            if not isinstance(questions, list):
+                continue
+            for q in questions:
+                try:
+                    qkey = create_unique_question_key(q)
+                except Exception:
+                    continue
+                if qkey in solved_keys and qkey not in seen_keys:
+                    qtext = q.get("text")
+                    if isinstance(qtext, str) and qtext.strip():
+                        texts.append(qtext)
+                        seen_keys.add(qkey)
+                        if len(texts) >= max_items:
+                            return texts
+    except Exception as e:
+        logger.debug(f"fetch_exclusion_texts failed: {e}")
+    return texts
 
 def rename_test_chat(chat_id, new_name):
     if not new_name:
@@ -571,6 +938,8 @@ def test_page():
     
     subject = st.selectbox("Пәнді таңдаңыз", list(SUBJECTS.keys()), key="test_subject_select")
 
+
+
     # Show test creation button if no test exists, or show "Start New Test" if current test is completed
     if not st.session_state.get("current_test"):
         if st.button("Тест құру", key="create_test"):
@@ -589,12 +958,19 @@ def test_page():
                     "role": "system",
                     "content": f"Жаңа тест құрылды: {subject}. Сұрақтар саны: {len(test_questions)}"
                 })
-                # Пән + күн форматы (дд.мм.гг) бойынша чат атауын орнату
+                # Пән + күн форматы (дд.мм.гг) бойынша чат атауын орнату (уникалды атау)
                 date_str = datetime.now().strftime('%d.%m.%y')
-                new_title = f"{subject} - {date_str}"
-                success, result = rename_test_chat(st.session_state.test_chat_id, new_title)
-                if success:
-                    st.session_state.test_chat_title = result
+                base_title = f"{subject} - {date_str}"
+                attempt_idx = 1
+                new_title = base_title
+                while True:
+                    success, result = rename_test_chat(st.session_state.test_chat_id, new_title)
+                    if success:
+                        st.session_state.test_chat_title = result
+                        break
+                    # Если дубликат — добавляем суффикс #N и пробуем снова
+                    attempt_idx += 1
+                    new_title = f"{base_title} #{attempt_idx}"
 
                 # Толық тестті бастапқы күйде сақтаймыз
                 initial_payload = {
@@ -892,12 +1268,20 @@ def test_page():
                 st.error(error_msg)
                 st.session_state.test_messages.append({"role": "assistant", "content": error_msg})
 
+            rerun_needed = False
             if len(st.session_state.test_messages) == 2:
-                new_title = generate_chat_title(user_input, subject)
-                success, result = rename_test_chat(st.session_state.test_chat_id, new_title)
-                if success:
-                    st.session_state.test_chat_title = result
-                    logger.debug(f"Test chat renamed to {result}")
+                base_title = generate_chat_title(user_input, subject)
+                attempt_idx = 1
+                new_title = base_title
+                while True:
+                    success, result = rename_test_chat(st.session_state.test_chat_id, new_title)
+                    if success:
+                        st.session_state.test_chat_title = result
+                        logger.debug(f"Test chat renamed to {result}")
+                        rerun_needed = True
+                        break
+                    attempt_idx += 1
+                    new_title = f"{base_title} #{attempt_idx}"
 
             save_test_chat(
                 chat_id=st.session_state.test_chat_id,
@@ -905,6 +1289,8 @@ def test_page():
                 messages=st.session_state.test_messages,
                 title=st.session_state.test_chat_title
             )
+            if rerun_needed:
+                st.rerun()
 
     # Тестті көрсету
     current_test = st.session_state.get("current_test") or []
@@ -914,41 +1300,106 @@ def test_page():
 
         # Only show questions if test is not submitted
         if not st.session_state.get("test_submitted"):
-            for i, question in enumerate(current_test):
-                st.write(f"**{i + 1}. {question['text']}**")
+            # Use form to prevent automatic page refreshes
+            with st.form("test_form", clear_on_submit=False):
+                for i, question in enumerate(current_test):
+                    st.write(f"**{i + 1}. {question['text']}**")
+                    
+                    # Show radio buttons for answering
+                    answer = st.radio(
+                        f"{i + 1} сұраққа жауап таңдаңыз",
+                        question["options"],
+                        key=f"q_{i}_{st.session_state.test_chat_id}",
+                        index=None
+                    )
+                    
+                    # Store answer in session state only if selected
+                    if answer is not None:
+                        (st.session_state.setdefault("user_answers", {}))[i] = answer
                 
-                # Show radio buttons for answering
-                answer = st.radio(
-                    f"{i + 1} сұраққа жауап таңдаңыз",
-                    question["options"],
-                    key=f"q_{i}_{st.session_state.test_chat_id}",
-                    index=None
-                )
-                (st.session_state.setdefault("user_answers", {}))[i] = answer
+                # Submit button inside the form
+                submitted = st.form_submit_button("Жауаптарды жіберу")
+                
+                # Check answers after form submission
+                if submitted:
+                    user_answers = st.session_state.get("user_answers") or {}
+                    total_q = len(current_test)
+                    answered_all = all(user_answers.get(i) is not None for i in range(total_q))
+                    
+                    if not answered_all:
+                        unanswered = [i + 1 for i in range(total_q) if user_answers.get(i) is None]
+                        st.warning(f"Барлық сұрақтарға жауап беріңіз! Жауап берілмеген сұрақтар: {', '.join(map(str, unanswered))}")
+                    else:
+                        # Process the test
+                        correct_count = 0
+                        results = []
+                        for i, question in enumerate(current_test):
+                            user_answer = user_answers.get(i)
+                            is_correct = user_answer == question["options"][question["correct_option"]]
+                            if is_correct:
+                                correct_count += 1
+                            results.append({
+                                "question": question["text"],
+                                "user_answer": user_answer,
+                                "correct_answer": question["options"][question["correct_option"]],
+                                "is_correct": is_correct,
+                                "book_title": question["book_title"],
+                                "page": question["page"],
+                                "context": question["context"],
+                                "explanation": question["explanation"]
+                            })
+                        st.session_state.test_results = {
+                            "score": correct_count,
+                            "total": len(current_test),
+                            "results": results
+                        }
+                        st.session_state.test_submitted = True
+                        # Persist only correctly answered questions for this user/subject
+                        try:
+                            logger.debug(f"Calling save_results for subject='{subject}' with {len(current_test)} questions")
+                            save_results(subject, current_test, st.session_state.test_results)
+                            logger.debug("save_results completed successfully")
+                            
+                            # Force refresh the solved keys cache after saving
+                            subj = canonical_subject(subject)
+                            cache_key = f"excluded_keys_cache_{subj}"
+                            # Clear the cache to force fresh fetch on next test
+                            if cache_key in st.session_state:
+                                del st.session_state[cache_key]
+                            logger.debug(f"Cleared cache for subject '{subj}' to force fresh fetch")
+                        except Exception as e:
+                            logger.error(f"Error in save_results: {e}")
+                            st.error(f"Ошибка сохранения результатов: {e}")
+                        st.session_state.test_messages.append({
+                            "role": "system",
+                            "content": f"Тест аяқталды. Ұпай: {correct_count}/{len(current_test)}"
+                        })
+                        # Save the final full test payload (questions, user answers, results)
+                        final_payload = {
+                            "subject": subject,
+                            "questions": current_test,
+                            "user_answers": user_answers,
+                            "results": st.session_state.test_results,
+                            "submitted": True,
+                            "submitted_at": datetime.utcnow().isoformat()
+                        }
+                        save_or_update_saved_test(
+                            chat_id=st.session_state.test_chat_id,
+                            user_id=st.session_state.user_id,
+                            subject=subject,
+                            test_json=final_payload
+                        )
+                        save_test_chat(
+                            chat_id=st.session_state.test_chat_id,
+                            user_id=st.session_state.user_id,
+                            messages=st.session_state.test_messages,
+                            title=st.session_state.test_chat_title
+                        )
+                        st.rerun()  # Force rerun to show results immediately
 
-        # Persist partial progress only when answers actually change (reduces slowness)
-        user_answers = st.session_state.get("user_answers") or {}
-        # Use a JSON-based representation to avoid mixed-type key sort errors
-        try:
-            normalized_answers_repr = json.dumps({str(k): user_answers.get(k) for k in user_answers}, sort_keys=True, ensure_ascii=False)
-        except Exception:
-            normalized_answers_repr = str(user_answers)
-        if st.session_state.get("last_saved_answers_repr") != normalized_answers_repr:
-            st.session_state["last_saved_answers_repr"] = normalized_answers_repr
-            partial_payload = {
-                "subject": subject,
-                "questions": current_test,
-                "user_answers": user_answers,
-                "results": st.session_state.get("test_results"),
-                "submitted": bool(st.session_state.get("test_submitted")),
-                "updated_at": datetime.utcnow().isoformat()
-            }
-            save_or_update_saved_test(
-                chat_id=st.session_state.test_chat_id,
-                user_id=st.session_state.user_id,
-                subject=subject,
-                test_json=partial_payload
-            )
+
+        # Note: We no longer auto-save answers to prevent page refreshes during test taking
+        # Answers are only saved when the user explicitly submits the test
         # After progress saving, show feedback if submitted
         # If already submitted, render per-question feedback reliably
         if st.session_state.get("test_submitted") and isinstance(test_results, dict):
@@ -971,75 +1422,7 @@ def test_page():
                 st.markdown(f"**Түсініктеме:** {result['explanation']}")
                 st.markdown("---")
 
-        # Show submit button only if test is not submitted
-        if not st.session_state.get("test_submitted"):
-            user_answers = st.session_state.get("user_answers") or {}
-            answered_all = all(user_answers.get(i) is not None for i in range(len(current_test)))
-            if answered_all:
-                if st.button("Жауаптарды жіберу", key="submit_test"):
-                    correct_count = 0
-                    results = []
-                    for i, question in enumerate(current_test):
-                        user_answer = user_answers.get(i)
-                        is_correct = user_answer == question["options"][question["correct_option"]]
-                        if is_correct:
-                            correct_count += 1
-                        results.append({
-                            "question": question["text"],
-                            "user_answer": user_answer,
-                            "correct_answer": question["options"][question["correct_option"]],
-                            "is_correct": is_correct,
-                            "book_title": question["book_title"],
-                            "page": question["page"],
-                            "context": question["context"],
-                            "explanation": question["explanation"]
-                        })
-                    st.session_state.test_results = {
-                        "score": correct_count,
-                        "total": len(current_test),
-                        "results": results
-                    }
-                    st.session_state.test_submitted = True
-                    st.session_state.test_messages.append({
-                        "role": "system",
-                        "content": f"Тест аяқталды. Ұпай: {correct_count}/{len(current_test)}"
-                    })
-                    # Save the final full test payload (questions, user answers, results)
-                    final_payload = {
-                        "subject": subject,
-                        "questions": current_test,
-                        "user_answers": user_answers,
-                        "results": st.session_state.test_results,
-                        "submitted": True,
-                        "submitted_at": datetime.utcnow().isoformat()
-                    }
-                    save_or_update_saved_test(
-                        chat_id=st.session_state.test_chat_id,
-                        user_id=st.session_state.user_id,
-                        subject=subject,
-                        test_json=final_payload
-                    )
-                    save_test_chat(
-                        chat_id=st.session_state.test_chat_id,
-                        user_id=st.session_state.user_id,
-                        messages=st.session_state.test_messages,
-                        title=st.session_state.test_chat_title
-                    )
-                    st.rerun()  # Force rerun to show results immediately
-            else:
-                st.warning("Барлық сұрақтарға жауап беріңіз!")
+
         else:
             # Test is completed - show completion message and option to start new test
             st.info("🎯 Бұл тест аяқталды. Сіз тек нәтижелерді көре аласыз.")
-        
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            if st.button("🆕 Жаңа тест бастау", key="start_new_test"):
-                # Clear current test state
-                st.session_state.current_test = None
-                st.session_state.user_answers = {}
-                st.session_state.test_submitted = False
-                st.session_state.test_results = None
-                st.rerun()
-        with col2:
-            st.info("Жаңа тест бастау үшін жоғарыдағы 'Жаңа тест чаты' түймесін басыңыз.")
