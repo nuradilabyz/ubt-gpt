@@ -468,9 +468,22 @@ def extract_kazakh_text_from_image(image_bytes: bytes, mime_type: str = "image/p
         return ""
 
 
-def login_page():
-    st.title("Кіру")
+def email_confirmation_page():
+    """Page shown after successful email confirmation"""
     st.markdown("<div class='header-container'><h1>🧠 UBT-GPT</h1></div>", unsafe_allow_html=True)
+    st.markdown(CSS, unsafe_allow_html=True)
+    
+    st.success("✅ Email растау сәтті аяқталды!")
+    st.markdown("**Сіздің email мекенжайыңыз сәтті расталды.**")
+    st.markdown("Енді сіз жүйеге кіре аласыз.")
+    
+    if st.button("Кіру бетіне өту", key="go_to_login"):
+        # Clear any confirmation-related session state
+        st.session_state.pop("email_confirmed", None)
+        st.rerun()
+
+def login_page():
+    st.markdown("<div class='header-container'><h1>UBT-GPT🏆</h1></div>", unsafe_allow_html=True)
 
     # After successful registration, show confirmation notice and keep user on login
     if st.session_state.get("just_registered"):
@@ -511,8 +524,6 @@ def login_page():
 
     # Анонимді кіру UI толық алынды
 
-    if st.button("Шығу", key="logout_button"):
-        sign_out()
 
 
 def main_page():
@@ -758,6 +769,60 @@ def main_page():
 # Навигация
 def main():
     st.set_page_config(page_title="UBT-GPT🏆", layout="wide")
+
+    # Check for email confirmation URL parameters
+    try:
+        # Get URL parameters
+        query_params = st.query_params
+        if query_params:
+            # Check for Supabase email confirmation parameters
+            # Supabase might use different parameter names in confirmation URLs
+            has_confirmation_params = (
+                ("access_token" in query_params and "refresh_token" in query_params) or
+                ("token" in query_params) or
+                ("type" in query_params and query_params["type"] == "signup") or
+                ("type" in query_params and query_params["type"] == "recovery")
+            )
+            
+            if has_confirmation_params:
+                # This is likely an email confirmation callback
+                try:
+                    # Try to get tokens from URL parameters
+                    access_token = query_params.get("access_token")
+                    refresh_token = query_params.get("refresh_token")
+                    
+                    if access_token and refresh_token:
+                        # Set the session with the tokens from the confirmation link
+                        supabase.auth.set_session(access_token=access_token, refresh_token=refresh_token)
+                        
+                        # Store tokens in session state
+                        st.session_state["sb_access_token"] = access_token
+                        st.session_state["sb_refresh_token"] = refresh_token
+                        
+                        # Get user info to set user_id
+                        user_response = supabase.auth.get_user()
+                        if user_response and user_response.user:
+                            st.session_state.user_id = user_response.user.id
+                            st.session_state["email_confirmed"] = True
+                            logger.info(f"Email confirmed for user: {user_response.user.email}")
+                    else:
+                        # If no tokens, just show confirmation message
+                        st.session_state["email_confirmed"] = True
+                        logger.info("Email confirmation detected (no tokens)")
+                    
+                    # Clear URL parameters to avoid showing them in the URL
+                    st.query_params.clear()
+                    
+                except Exception as e:
+                    logger.error(f"Error processing email confirmation: {e}")
+                    st.error("Email растау кезінде қате шықты.")
+    except Exception as e:
+        logger.debug(f"Error checking URL parameters: {e}")
+
+    # Show email confirmation page if user just confirmed their email
+    if st.session_state.get("email_confirmed"):
+        email_confirmation_page()
+        return
 
     # Попытка восстановить сессию Supabase из сохраненных токенов
     try:
