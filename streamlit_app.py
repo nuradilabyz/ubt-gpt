@@ -336,21 +336,36 @@ def generate_chat_title(prompt, subject):
         logger.error(f"Ошибка генерации заголовка: {str(e)}")
         return f"{subject} - Сұрақ"
 
+EXTENDED_SYSTEM_PROMPT = """
+Сен қазақ мектебінің оқушыларына көмек көрсететін ассистентсің. Жауаптарың толық, түсінікті әрі нақты болуы тиіс. Әр сұраққа: 
+1. Тақырыпты қысқаша түсіндіріп өт (негізгі ұғымдар мен контекст); 
+2. Негізгі жауапты нақты айт; 
+3. Егер жауап күрделі болса — қарапайым тілмен қосымша түсіндіріп бер; 
+4. Қажет болса — мысал келтір немесе салыстыру арқылы түсіндір; 
+5. Оқушы бірден түсінбесе, оны қайтадан түсіндіру үшін қосымша дайын бол; 
+6. Ұқсас сұрақтар немесе ҰБТ форматында қандай сұрақ келуі мүмкін екенін ұсын; 
+7. Қайта есте сақтау үшін қысқаша қорытынды жаз немесе мнемоника көмектес; 
+8. Ақпарат тек берілген мәтіннен алынуы керек, сыртқы мәліметтерді қолданба.
+"""
+
+
 
 def send_prompt(thread_id, prompt, subject):
     max_retries = 5
     retry_delay = 10
     for attempt in range(max_retries):
         try:
+            # Send user message
             client.beta.threads.messages.create(
                 thread_id=thread_id,
                 role="user",
-                content=prompt
+                content=prompt + EXTENDED_SYSTEM_PROMPT
             )
+            # Create run with additional instructions
             run = client.beta.threads.runs.create(
                 thread_id=thread_id,
                 assistant_id=SUBJECTS[subject]["assistant_id"],
-                tools=[{"type": "file_search"}]
+                tools=[{"type": "file_search"}],
             )
             while run.status in ["queued", "in_progress"]:
                 run = client.beta.threads.runs.retrieve(thread_id=thread_id, run_id=run.id)
@@ -705,65 +720,69 @@ def main_page():
                 st.session_state["last_main_img_hash"] = current_hash
                 extracted_text = extract_kazakh_text_from_image(image_bytes, mime_type)
                 if extracted_text:
-                    st.session_state.main_messages.append({"role": "user", "content": extracted_text})
-                    with st.chat_message("user"):
-                        st.markdown(extracted_text)
-                    with st.spinner("Жауап дайындалуда..."):
-                        response = send_prompt(st.session_state.main_thread_id, extracted_text, subject)
-                        if response:
-                            st.session_state.main_messages.append({"role": "assistant", "content": response})
-                            with st.chat_message("assistant"):
-                                st.markdown(response)
-                            save_main_chat(
-                                chat_id=st.session_state.main_chat_id,
-                                user_id=st.session_state.user_id,
-                                messages=st.session_state.main_messages,
-                                title=st.session_state.main_chat_title,
-                                thread_id=st.session_state.main_thread_id
-                            )
-                            # After first exchange, rename and refresh
-                            if len(st.session_state.main_messages) == 2:
-                                new_title = generate_chat_title(extracted_text, subject)
-                                success, result = rename_main_chat(st.session_state.main_chat_id, new_title)
-                                if success:
-                                    st.session_state.main_chat_title = result
-                                    st.rerun()
+                    # Put extracted text into the chat input field
+                    st.session_state["pending_text"] = extracted_text
                 else:
                     st.error("Мәтін табылмады. Басқа ракурс/сапалы сурет жүктеп көріңіз.")
 
+    # Show attached file info if any
+    if st.session_state.get("pending_text"):
+        st.info(f"📎 File attached: {len(st.session_state['pending_text'])} characters extracted")
+    
+    # Always use the same chat input field
     user_input = st.chat_input("Сұрағыңызды енгізіңіз...", key="main_input")
+    
     if user_input:
-        st.session_state.main_messages.append({"role": "user", "content": user_input})
-        with st.chat_message("user"):
-            st.markdown(user_input)
+        process_user_message(user_input, subject)
 
-        with st.spinner("Жауап дайындалуда..."):
-            response = send_prompt(st.session_state.main_thread_id, user_input, subject)
-            if response:
-                st.session_state.main_messages.append({"role": "assistant", "content": response})
-                with st.chat_message("assistant"):
-                    st.markdown(response)
+def process_user_message(user_input, subject):
+    """Helper function to process user messages"""
+    # Check if there's attached file content
+    attached_content = st.session_state.get("pending_text", "")
+    
+    # Combine user input with attached content if any
+    if attached_content:
+        full_message = f"📎 Attached file content:\n{attached_content}\n\n👤 User question: {user_input}"
+        # Clear the attached content after using it
+        st.session_state.pop("pending_text", None)
+    else:
+        full_message = user_input
+    
+    # Display only the user's question in chat (not the full message with file content)
+    st.session_state.main_messages.append({"role": "user", "content": user_input})
+    with st.chat_message("user"):
+        st.markdown(user_input)
+        if attached_content:
+            st.markdown(f"📎 *File attached ({len(attached_content)} characters)*")
 
-                # Автоматическое переименование после первого сообщения
-                if len(st.session_state.main_messages) == 2:
-                    new_title = generate_chat_title(user_input, subject)
-                    success, result = rename_main_chat(st.session_state.main_chat_id, new_title)
-                    if success:
-                        st.session_state.main_chat_title = result
-                        st.session_state["main_title_renamed"] = True
-                        logger.debug(f"Chat renamed to {result}")
+    with st.spinner("Жауап дайындалуда..."):
+        # Send the full message (including file content) to the model
+        response = send_prompt(st.session_state.main_thread_id, full_message, subject)
+        if response:
+            st.session_state.main_messages.append({"role": "assistant", "content": response})
+            with st.chat_message("assistant"):
+                st.markdown(response)
 
-                save_main_chat(
-                    chat_id=st.session_state.main_chat_id,
-                    user_id=st.session_state.user_id,
-                    messages=st.session_state.main_messages,
-                    title=st.session_state.main_chat_title,
-                    thread_id=st.session_state.main_thread_id
-                )
-                # Refresh immediately if title was renamed
-                if st.session_state.get("main_title_renamed"):
-                    st.session_state.pop("main_title_renamed", None)
-                    st.rerun()
+            # Автоматическое переименование после первого сообщения
+            if len(st.session_state.main_messages) == 2:
+                new_title = generate_chat_title(user_input, subject)
+                success, result = rename_main_chat(st.session_state.main_chat_id, new_title)
+                if success:
+                    st.session_state.main_chat_title = result
+                    st.session_state["main_title_renamed"] = True
+                    logger.debug(f"Chat renamed to {result}")
+
+            save_main_chat(
+                chat_id=st.session_state.main_chat_id,
+                user_id=st.session_state.user_id,
+                messages=st.session_state.main_messages,
+                title=st.session_state.main_chat_title,
+                thread_id=st.session_state.main_thread_id
+            )
+            # Refresh immediately if title was renamed
+            if st.session_state.get("main_title_renamed"):
+                st.session_state.pop("main_title_renamed", None)
+                st.rerun()
 
 
 # Навигация
