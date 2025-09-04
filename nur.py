@@ -26,7 +26,7 @@ PSYCHOLOGY_ASSISTANT_ID = os.getenv("PSYCHOLOGY_ASSISTANT_ID", "").strip()
 
 # Проверка переменных окружения
 if not all([supabase_url_env, supabase_key_env, openai_api_key_env]):
-    st.error("Қате: .env файлында айнымалылар анықталмаған.")
+    st.error("💔 Кешіріңіз, .env файлында айнымалылар анықталмаған ✨")
     logger.error("Айнымалылар окружения отсутствуют.")
     st.stop()
 
@@ -35,10 +35,39 @@ SUPABASE_KEY: str = cast(str, supabase_key_env)
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 PSYCHOLOGY_PROMPT = """
-Сен ЕНТ-ға дайындалатын оқушыларға қолдау көрсететін достық психолог-консультантсың.
-Жауаптарың түсінікті, жанашыр және практикалық кеңестер беретін болуы керек.
-Оқушының жағдайын мұқият талдап, оған қолдау көрсет және нақты шешімдер ұсын.
-Жауаптарың қазақ тілінде болуы керек.
+Сен ЕНТ-ға дайындалатын оқушыларға қолдау көрсететін өте жанашыр, сүйкімді және жылы психолог-консультантсың 💖✨🌸
+
+Жауаптарыңда мынадай сөздер мен эмодзиларды жиі қолданып, өте жылы және қолдаушы болуың керек:
+
+❤️❤️‍🩹❤️‍🔥❤️🩷🧡💛💚🤍🩶🖤💜🩵🥰😍😘😮‍💨🙂‍↕️🥹😻🔥⭐🌈🌟🦄🌸🌷🌼💖💕💝✨🧸🎀
+
+Қазақ тіліндегі махаббат сөздері:
+- Жаным 💖 (my dear)
+- Күнім ☀️ (my sun)
+- Айым 🌙 (my moon)
+- Ботам 🐪 (my camel)
+- Еркем 🌸 (my dear)
+- Шырағым ✨ (my light)
+- Қоңыр қозым 🐑 (my brown lamb)
+- Алтыншам 🥇 (my golden one)
+- Сәулем 🌞 (my ray)
+- Арманым 🌈 (my dream)
+- Гүлім 🌷 (my flower)
+- Жұлдызым ⭐ (my star)
+- Періштем 👼 (my angel)
+- Нұрым 🌟 (my light)
+- Тәттім 🍯 (my sweet)
+- Шаттығым 😊 (my joy)
+
+Әрбір жауабыңда:
+1. Жанашыр эмодзилар мен махаббат сөздерін қолдан
+2. Өте жылы, қолдаушы және махаббатты тонда жауап бер
+3. Оқушыны мадақтап, оның күш-қуатын арттыр
+4. Практикалық кеңестерді махаббатпен ұсын
+5. Оқушының жағдайын мұқият тыңдап, оған қолдау көрсет
+6. Әрбір жауапта кемінде 3-5 эмодзи мен 1-2 махаббат сөзін қолдан
+
+Жауаптарың қазақ тілінде болуы керек және өте жылы, қолдаушы болуың керек.
 Егер алдыңғы хабарламалар болса, оларды ескеріп, әңгімені жалғастыр.
 Алдыңғы хабарламалар: {previous_messages}
 """
@@ -63,7 +92,7 @@ def load_psychology_chat_titles(user_id):
         return chats
     except Exception as e:
         logger.error(f"Ошибка загрузки чатов: {str(e)}")
-        st.error(f"Чат тарихын жүктеу кезінде қате: {str(e)}")
+        st.error(f"💔 Кешіріңіз, чат тарихын жүктеу кезінде қате шықты ✨")
         return []
 
 def load_psychology_chat(chat_id):
@@ -75,7 +104,7 @@ def load_psychology_chat(chat_id):
         return []
     except Exception as e:
         logger.error(f"Ошибка загрузки чата {chat_id}: {str(e)}")
-        st.error(f"Чатты жүктеу кезінде қате: {str(e)}")
+        st.error(f"💔 Кешіріңіз, чатты жүктеу кезінде қате шықты ✨")
         return []
 
 def save_psychology_chat(chat_id, user_id, messages, title):
@@ -99,7 +128,7 @@ def save_psychology_chat(chat_id, user_id, messages, title):
         logger.debug(f"Saved psychology chat {chat_id} with title {title}")
     except Exception as e:
         logger.error(f"Ошибка сохранения чата {chat_id}: {str(e)}")
-        st.error(f"Чатты сақтау кезінде қате: {str(e)}")
+        st.error(f"💔 Кешіріңіз, чатты сақтау кезінде қате шықты ✨")
 
 def delete_psychology_chat(chat_id):
     try:
@@ -108,7 +137,7 @@ def delete_psychology_chat(chat_id):
         return response.data is not None
     except Exception as e:
         logger.error(f"Ошибка удаления чата {chat_id}: {str(e)}")
-        st.error(f"Чатты жою кезінде қате: {str(e)}")
+        st.error(f"💔 Кешіріңіз, чатты жою кезінде қате шықты ✨")
         return False
 
 def cleanup_empty_psychology_chats(user_id):
@@ -126,17 +155,17 @@ def cleanup_empty_psychology_chats(user_id):
 
 def rename_psychology_chat(chat_id, new_name):
     if not new_name:
-        return False, "Жаңа атау бос болмауы керек."
+        return False, "💔 Кешіріңіз, жаңа атау бос болмауы керек ✨"
     try:
         response = supabase.table("psychology_chats").select("id").eq("title", new_name).execute()
         if response.data:
-            return False, "Бұл атаумен чат бар."
+            return False, "💔 Кешіріңіз, бұл атаумен чат бар ✨"
         supabase.table("psychology_chats").update({"title": new_name, "updated_at": datetime.utcnow().isoformat()}).eq("id", chat_id).execute()
         logger.debug(f"Renamed psychology chat {chat_id} to {new_name}")
         return True, new_name
     except Exception as e:
         logger.error(f"Ошибка переименования чата {chat_id}: {str(e)}")
-        return False, f"Чат атауын өзгерту кезінде қате: {str(e)}"
+        return False, f"💔 Кешіріңіз, чат атауын өзгерту кезінде қате шықты ✨"
 
 def create_new_psychology_chat(user_id):
     try:
@@ -154,7 +183,7 @@ def create_new_psychology_chat(user_id):
         return chat_id, title
     except Exception as e:
         logger.error(f"Ошибка создания чата: {str(e)}")
-        st.error(f"Жаңа чат құру кезінде қате: {str(e)}")
+        st.error(f"💔 Кешіріңіз, жаңа чат құру кезінде қате шықты ✨")
         return None, None
 
 def generate_chat_title(prompt):
@@ -182,7 +211,7 @@ def generate_chat_title(prompt):
 
 def psychology_page():
     if "user_id" not in st.session_state or not st.session_state.user_id:
-        st.error("Сіз авторизациядан өтуіңіз керек!")
+        st.error("💔 Кешіріңіз, сіз авторизациядан өтуіңіз керек ✨")
         return
 
     # Supabase сессиясын қалпына келтіруге тырысамыз (егер негізгі бетте сақталған болса)
@@ -207,7 +236,7 @@ def psychology_page():
     if "psychology_chat_id" not in st.session_state:
         chat_id, title = create_new_psychology_chat(st.session_state.user_id)
         if chat_id is None:
-            st.error("Жаңа чат құру мүмкін болмады. Supabase-те 'psychology_chats' таблицасы бар екеніне көз жеткізіңіз.")
+            st.error("💔 Кешіріңіз, жаңа чат құру мүмкін болмады. Supabase-те 'psychology_chats' таблицасы бар екеніне көз жеткізіңіз ✨")
             logger.error("Failed to create new psychology chat")
             return
         st.session_state.psychology_chat_id = chat_id
@@ -217,13 +246,16 @@ def psychology_page():
 
     st.markdown(CSS, unsafe_allow_html=True)
     st.markdown(
-    "<div class='header-container'>"
-    "<h1><b>NUR✨</b></h1>"
-    "<p style='color:#ffffff;'><b>Бұл бет ҰБТ-ға дайындалып жүрген оқушыларға қолдау көрсетіп, жанашыр кеңес береді.</b><br>"
-    "🧘‍♀️ <i>Стресс</i>, 🎯 <i>шоғырлану</i> немесе 💡 <i>мотивация</i> туралы кез келген сұрақтарыңызды қоя аласыз.</p>"
-    "</div>",
-    unsafe_allow_html=True
-)
+        "<div class='header-container'>"
+        "<h1><b>NUR✨</b></h1>"
+        "<p style='font-size:18px; line-height:1.6;'>"
+        "Бұл бетте сіз стресс 🧘‍♀️, шоғырлану 🎯, мотивация 💡 және басқа да маңызды мәселелер бойынша сұрақтарыңызды қоя аласыз.<br><br>"
+        "Әрбір сұрағыңыз назардан тыс қалмайды 🌟. "
+        "Мақсатымыз — сізге қолдау көрсету және шабыт беру 🌈✨."
+        "</p>"
+        "</div>",
+        unsafe_allow_html=True
+    )
 
     with st.sidebar:
         st.markdown("<h2 style='text-align: center; color: #ffffff;'>💬 Чаттар</h2>", unsafe_allow_html=True)
@@ -236,7 +268,7 @@ def psychology_page():
                 pass
             chat_id, title = create_new_psychology_chat(st.session_state.user_id)
             if chat_id is None:
-                st.error("Жаңа чат құру мүмкін болмады.")
+                st.error("💔 Кешіріңіз, жаңа чат құру мүмкін болмады ✨")
                 logger.error("Failed to create new psychology chat")
                 return
             st.session_state.psychology_chat_id = chat_id
@@ -297,7 +329,7 @@ def psychology_page():
                                     if chat_id == st.session_state.get("psychology_chat_id", ""):
                                         chat_id, title = create_new_psychology_chat(st.session_state.user_id)
                                         if chat_id is None:
-                                            st.error("Жаңа чат құру мүмкін болмады.")
+                                            st.error("💔 Кешіріңіз, жаңа чат құру мүмкін болмады ✨")
                                             return
                                         st.session_state.psychology_chat_id = chat_id
                                         st.session_state.psychology_chat_title = title
@@ -305,7 +337,7 @@ def psychology_page():
                                     st.session_state.action_state = {"action": None, "chat_id": None}
                                     st.rerun()
                                 else:
-                                    st.error("Чатты жою кезінде қате шықты.")
+                                    st.error("💔 Кешіріңіз, чатты жою кезінде қате шықты ✨")
                         with col_cancel:
                             if st.button("Жоқ", key=f"cancel_delete_psychology_{chat_id}"):
                                 st.session_state.action_state = {"action": None, "chat_id": None}
@@ -316,13 +348,13 @@ def psychology_page():
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    user_input = st.chat_input("✍️ Жағдайды сипаттаңыз немесе сұрақ қойыңыз...", key="psychology_input")
+    user_input = st.chat_input("💖 Жағдайыңызды сипаттаңыз немесе жүректен шыққан сұрақтарыңызды қойыңыз... ✨", key="psychology_input")
     if user_input:
         st.session_state.psychology_messages.append({"role": "user", "content": user_input})
         with st.chat_message("user"):
             st.markdown(user_input)
 
-        with st.spinner("Кеңес дайындалуда..."):
+        with st.spinner("💖 Сізге жылы кеңес дайындалуда... ✨"):
             max_retries = 5
             retry_delay = 10
             for attempt in range(max_retries):
@@ -393,7 +425,7 @@ def psychology_page():
                             except Exception:
                                 pass
                         else:
-                            error_msg = f"Психология ассистенті жауап бере алмады: {run.status}"
+                            error_msg = f"💔 Кешіріңіз, қазір жауап бере алмаймын. Кішкене күтіп, қайта көріңіз ✨"
                             if hasattr(run, 'last_error') and run.last_error:
                                 error_msg += f" ({run.last_error.message})"
                             st.error(error_msg)
@@ -419,7 +451,7 @@ def psychology_page():
                             ],
                             temperature=0.7,
                         )
-                        answer_text = completion.choices[0].message.content or "Кешіріңіз, қазір жауап бере алмадым. Қайта көріңіз."
+                        answer_text = completion.choices[0].message.content or "💔 Кешіріңіз, қазір жауап бере алмаймын. Кішкене күтіп, қайта көріңіз ✨"
                         answer_text = answer_text.strip()
 
                         st.session_state.psychology_messages.append({"role": "assistant", "content": answer_text})
@@ -451,10 +483,10 @@ def psychology_page():
                         retry_delay *= 2
                     else:
                         logger.error("OpenAI rate limit exceeded")
-                        st.error("Қате: OpenAI лимиті асып кетті. 2-3 минут күтіңіз немесе OpenAI есептік жазбаңызды тексеріңіз: https://platform.openai.com/account/usage")
+                        st.error("💔 Кешіріңіз, OpenAI лимиті асып кетті. 2-3 минут күтіп, қайта көріңіз ✨")
                         st.session_state.psychology_messages.append({
                             "role": "assistant",
-                            "content": "Кешіріңіз, қазір жауап бере алмаймын. Лимитке жеттіңіз."
+                            "content": "💔 Кешіріңіз, қазір жауап бере алмаймын. Лимитке жеттіңіз. Кішкене күтіп, қайта көріңіз ✨"
                         })
                         with st.chat_message("assistant"):
                             st.markdown(st.session_state.psychology_messages[-1]["content"])
@@ -475,7 +507,7 @@ def psychology_page():
                             ],
                             temperature=0.7,
                         )
-                        answer_text = completion.choices[0].message.content or "Кешіріңіз, қазір жауап бере алмадым. Қайта көріңіз."
+                        answer_text = completion.choices[0].message.content or "💔 Кешіріңіз, қазір жауап бере алмаймын. Кішкене күтіп, қайта көріңіз ✨"
                         answer_text = answer_text.strip()
 
                         st.session_state.psychology_messages.append({"role": "assistant", "content": answer_text})
@@ -491,6 +523,6 @@ def psychology_page():
                         break
                     except Exception as e2:
                         logger.error(f"Ошибка обработки запроса: {str(e)}; fallback failed: {str(e2)}")
-                        st.error(f"Қате: {str(e)}")
+                        st.error(f"💔 Кешіріңіз, қате шықты. Кішкене күтіп, қайта көріңіз ✨")
                         break
                 time.sleep(5)
