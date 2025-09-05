@@ -42,7 +42,6 @@ PSYCHOLOGY_PROMPT = """
 ❤️❤️‍🩹❤️‍🔥❤️🩷🧡💛💚🤍🩶🖤💜🩵🥰😍😘😮‍💨🙂‍↕️🥹😻🔥⭐🌈🌟🦄🌸🌷🌼💖💕💝✨🧸🎀
 
 Қазақ тіліндегі махаббат сөздері:
-- Жаным 💖 (my dear)
 - Күнім ☀️ (my sun)
 - Айым 🌙 (my moon)
 - Ботам 🐪 (my camel)
@@ -58,6 +57,7 @@ PSYCHOLOGY_PROMPT = """
 - Нұрым 🌟 (my light)
 - Тәттім 🍯 (my sweet)
 - Шаттығым 😊 (my joy)
+- Жаным 💖 (my dear)
 
 Әрбір жауабыңда:
 1. Жанашыр эмодзилар мен махаббат сөздерін қолдан
@@ -189,12 +189,11 @@ def create_new_psychology_chat(user_id):
 def generate_chat_title(prompt):
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5",
             messages=[
                 {"role": "system", "content": "Сұрақ негізінде қазақ тілінде қысқа тақырыпты анықта (максимум 5 сөз). Формат: 'Психология - [Тақырып]'"},
                 {"role": "user", "content": f"Сұрақ: {prompt}"}
-            ],
-            temperature=0.5
+            ]
         )
         content = response.choices[0].message.content
         if content is None:
@@ -348,13 +347,13 @@ def psychology_page():
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    user_input = st.chat_input("💖 Жағдайыңызды сипаттаңыз немесе жүректен шыққан сұрақтарыңызды қойыңыз... ✨", key="psychology_input")
+    user_input = st.chat_input("Жағдайыңызды сипаттаңыз немесе жүректен шыққан сұрақтарыңызды қойыңыз... ✨", key="psychology_input")
     if user_input:
         st.session_state.psychology_messages.append({"role": "user", "content": user_input})
         with st.chat_message("user"):
             st.markdown(user_input)
 
-        with st.spinner("💖 Сізге жылы кеңес дайындалуда... ✨"):
+        with st.spinner("Сізге жылы кеңес дайындалуда... ✨"):
             max_retries = 5
             retry_delay = 10
             for attempt in range(max_retries):
@@ -444,12 +443,11 @@ def psychology_page():
                         system_prompt = PSYCHOLOGY_PROMPT.format(previous_messages=previous_text)
 
                         completion = client.chat.completions.create(
-                            model="gpt-4o-mini",
+                            model="gpt-5",
                             messages=[
                                 {"role": "system", "content": system_prompt},
                                 {"role": "user", "content": user_input},
                             ],
-                            temperature=0.7,
                         )
                         answer_text = completion.choices[0].message.content or "💔 Кешіріңіз, қазір жауап бере алмаймын. Кішкене күтіп, қайта көріңіз ✨"
                         answer_text = answer_text.strip()
@@ -500,12 +498,11 @@ def psychology_page():
                         system_prompt = PSYCHOLOGY_PROMPT.format(previous_messages=previous_text)
 
                         completion = client.chat.completions.create(
-                            model="gpt-4o-mini",
+                            model="gpt-5",
                             messages=[
                                 {"role": "system", "content": system_prompt},
                                 {"role": "user", "content": user_input},
                             ],
-                            temperature=0.7,
                         )
                         answer_text = completion.choices[0].message.content or "💔 Кешіріңіз, қазір жауап бере алмаймын. Кішкене күтіп, қайта көріңіз ✨"
                         answer_text = answer_text.strip()
