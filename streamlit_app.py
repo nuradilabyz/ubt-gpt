@@ -316,13 +316,12 @@ def cleanup_empty_main_chats(user_id):
 def generate_chat_title(prompt, subject):
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5",
             messages=[
                 {"role": "system",
                  "content": "Сұрақ негізінде қазақ тілінде қысқа тақырыпты анықта (максимум 5 сөз). Формат: '[Пән] - [Тақырып]'"},
                 {"role": "user", "content": f"Пән: {subject}\nСұрақ: {prompt}"}
-            ],
-            temperature=0.5
+            ]
         )
         content = response.choices[0].message.content
         if content is not None:
@@ -465,7 +464,7 @@ def extract_kazakh_text_from_image(image_bytes: bytes, mime_type: str = "image/p
     try:
         data_url = f"data:{mime_type};base64,{base64.b64encode(image_bytes).decode('utf-8')}"
         resp = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5",
             messages=[
                 {
                     "role": "user",
@@ -474,8 +473,7 @@ def extract_kazakh_text_from_image(image_bytes: bytes, mime_type: str = "image/p
                         {"type": "image_url", "image_url": {"url": data_url}}
                     ]
                 }
-            ],
-            temperature=0
+            ]
         )
         content = resp.choices[0].message.content
         return content.strip() if isinstance(content, str) else (content or "").strip()
