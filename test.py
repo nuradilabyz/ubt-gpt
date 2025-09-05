@@ -279,28 +279,27 @@ def clean_response(text):
         st.error(f"JSON пішімі қате: {str(e)}")
         return None
 
-def generate_batch(subject, batch_size=5, exclusion_texts=None):
+def generate_batch(subject, batch_size=10, exclusion_texts=None):
     content = f"""
 {subject} пәні бойынша {batch_size} сұрақты көп таңдаулы түрде қазақ тілінде генерациялаңыз, ЕНТ оқулықтарына сәйкес.
 
 Талаптар:
 1. Әр сұрақ мыналарды қамтиды:
-   - Сұрақ мәтіні (ЕНТ оқулықтарынан, толтырғышсыз).
-   - 4 жауап нұсқасы: 1 дұрыс, 3 шынайы, бірақ қате.
-   - Дереккөз: оқулық атауы және бет нөмірі (мысалы, "25 бет").
-   - Контекст: оқулықтан алынған қысқа үзінді (100 сөзге дейін).
-   - Түсініктеме: дұрыс жауаптың неге дұрыс екенін және әр қате жауаптың неге қате екенін түсіндіретін мәтін (100–150 сөз, қазақ тілінде, оқулық мазмұнына сәйкес).
+   - Сұрақ мәтіні (ЕНТ оқулықтарынан).
+   - 4 жауап нұсқасы: 1 дұрыс, 3 қате.
+   - Дереккөз: оқулық атауы және бет нөмірі.
+   - Контекст: қысқа үзінді (50 сөзге дейін).
+   - Түсініктеме: дұрыс жауаптың неге дұрыс екенін түсіндіретін мәтін (50–80 сөз).
 2. Жауап пішімі:
    - ТЕК жарамды JSON, [ басталып, ] аяқталады.
-   - ```json, түсініктемелер немесе артық мәтінсіз.
    - Әр сұрақ үшін өрістер:
      - text: строка (сұрақ мәтіні).
      - options: 4 строка массиві (жауап нұсқалары).
      - correct_option: сан (0–3, дұрыс жауап индексі).
-     - book_title: строка (оқулық атауы, мысалы, "Құқық негіздері 10 сынып").
+     - book_title: строка (оқулық атауы).
      - page: строка (мысалы, "25 бет").
      - context: строка (оқулықтан контекст).
-     - explanation: строка (дұрыс және қате жауаптардың түсініктемесі).
+     - explanation: строка (түсініктеме).
 3. Мысал:
    [
      {{
@@ -309,11 +308,11 @@ def generate_batch(subject, batch_size=5, exclusion_texts=None):
        "correct_option": 0,
        "book_title": "Құқық негіздері 10 сынып",
        "page": "10 бет",
-       "context": "Құқық нормалары – қоғамдық қатынастарды реттейтін, мемлекетпен бекітілген ережелер.",
-       "explanation": "Дұрыс жауап – a) Заңмен реттелетін ережелер, өйткені құқық нормалары мемлекетпен бекітіліп, заңды күшке ие болады. b) Моральдық нормалар қоғамдық санамен реттеледі, бірақ заңды күші жоқ. c) Дін ережелері діни сенімдерге негізделген. d) Әдет-ғұрыптар – қоғамдық дәстүрлер, бірақ олар заңмен міндетті емес."
+       "context": "Құқық нормалары – қоғамдық қатынастарды реттейтін ережелер.",
+       "explanation": "Дұрыс жауап – a) Заңмен реттелетін ережелер, өйткені құқық нормалары мемлекетпен бекітіліп, заңды күшке ие болады."
      }}
    ]
-4. Тексеру: дәл {batch_size} сұрақ, деректер ЕНТ оқулықтарына сәйкес, бет, контекст және түсініктеме оқулық мазмұнына дәл сәйкес болуы керек.
+4. Тексеру: дәл {batch_size} сұрақ, деректер ЕНТ оқулықтарына сәйкес.
 """
 
     # Append explicit exclusion list to the prompt to prevent repeats
@@ -331,7 +330,7 @@ def generate_batch(subject, batch_size=5, exclusion_texts=None):
                     continue
                 if tx in seen_items:
                     continue
-                if total_chars + len(tx) > 12000:
+                if total_chars + len(tx) > 6000:  # Reduced from 12000 to 6000
                     break
                 items.append(tx)
                 seen_items.add(tx)
@@ -339,19 +338,11 @@ def generate_batch(subject, batch_size=5, exclusion_texts=None):
             if items:
                 exclusion_section = (
                     "ЕСКЕРТУ: Төмендегі сұрақтарға оқушы БҰРЫН ДҰРЫС жауап берген. "
-                    "Осы сұрақтарды және олардың мағыналық жақын нұсқаларын ҚОСПАҢЫЗ. "
-                    "ТЕК ЖАҢА СҰРАҚТАР ҚҰРЫҢЫЗ.\n"
-                    "NOTE: The student has ALREADY ANSWERED the following questions CORRECTLY. "
-                    "Do NOT include these or near-duplicates. Generate ONLY NEW questions.\n"
-                    "ALREADY_ANSWERED_QUESTIONS_JSON:\n"
+                    "Осы сұрақтарды ҚОСПАҢЫЗ. ТЕК ЖАҢА СҰРАҚТАР ҚҰРЫҢЫЗ.\n"
+                    "ALREADY_ANSWERED_QUESTIONS:\n"
                 )
-                exclusion_section += json.dumps(items, ensure_ascii=False, indent=2) + "\n\n"
-                exclusion_section += (
-                    "STRICT RULES:\n"
-                    "- Do NOT include any question whose 'text' is identical to, a paraphrase of, or contains major overlapping phrases/terms with any item in ALREADY_ANSWERED_QUESTIONS_JSON.\n"
-                    f"- Return exactly {batch_size} NEW questions. If any candidate violates this rule, regenerate it until all {batch_size} are valid.\n"
-                    "- Avoid reusing the same book_title and page pairing for near-identical facts as listed above.\n\n"
-                )
+                exclusion_section += "\n".join(items[:50]) + "\n\n"  # Limit to first 50 items
+                exclusion_section += f"STRICT: Do NOT include these questions. Generate exactly {batch_size} NEW questions.\n\n"
                 content = exclusion_section + content
                 logger.debug(f"Included {len(items)} exclusion items into the prompt")
     except Exception as e:
@@ -363,8 +354,10 @@ def generate_batch(subject, batch_size=5, exclusion_texts=None):
     except Exception:
         pass
 
-    max_retries = 5
-    retry_delay = 10
+
+
+    max_retries = 3
+    retry_delay = 5
     for attempt in range(max_retries):
         try:
             response = client.chat.completions.create(
@@ -396,12 +389,12 @@ def generate_batch(subject, batch_size=5, exclusion_texts=None):
             logger.error(f"Ошибка генерации партии: {str(e)}")
             st.error(f"Партияны генерациялау кезінде қате: {str(e)}")
             return []
-        time.sleep(5)
+        time.sleep(1)
 
 def generate_test(subject):
     questions = []
     attempts = 0
-    max_attempts = 10
+    max_attempts = 5
 
     if f"cached_test_{subject}" not in st.session_state:
         st.session_state[f"cached_test_{subject}"] = []
@@ -414,7 +407,7 @@ def generate_test(subject):
     # Fetch exclusion texts from saved tests for this user/subject to guide the model
     exclusion_texts = []
     try:
-        exclusion_texts = fetch_exclusion_texts(subj, solved_text_keys, max_items=2000)
+        exclusion_texts = fetch_exclusion_texts(subj, solved_text_keys, max_items=500)  # Reduced from 2000 to 500
         logger.debug(f"Fetched {len(exclusion_texts)} exclusion texts from saved_tests")
     except Exception as e:
         logger.debug(f"Exclusion texts fetch failed: {e}")
@@ -425,12 +418,20 @@ def generate_test(subject):
     logger.debug(f"Total solved keys to exclude: {len(solved_text_keys)}")
     logger.debug(f"Sample solved keys: {list(solved_text_keys)[:3]}")
 
+    # Create progress bar
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
     while len(questions) < 20 and attempts < max_attempts:
         try:
-            batch_questions = generate_batch(subject, batch_size=5, exclusion_texts=exclusion_texts)
+            # Update progress
+            progress = min(len(questions) / 20, 1.0)
+            progress_bar.progress(progress)
+            status_text.text(f"Сұрақтар генерациялануда... {len(questions)}/20")
+            
+            batch_questions = generate_batch(subject, batch_size=10, exclusion_texts=exclusion_texts)
             if not batch_questions:
                 attempts += 1
-                time.sleep(3)
                 continue
             before_cnt = len(batch_questions)
             logger.debug(f"Generated batch of {before_cnt} questions")
@@ -483,13 +484,17 @@ def generate_test(subject):
             after_cnt = len(questions)
             logger.debug(f"Batch processing: {before_cnt} candidates -> {after_cnt} total questions so far")
             attempts += 1
-            time.sleep(5)
+       
         except Exception as e:
             logger.error(f"Ошибка генерации партии: {str(e)}")
             st.error(f"Партияны генерациялау кезінде қате: {str(e)}")
             attempts += 1
-            time.sleep(5)
 
+
+    # Clear progress bar
+    progress_bar.empty()
+    status_text.empty()
+    
     if len(questions) < 20:
         logger.error(f"Generated only {len(questions)} questions instead of 20 (subject={subj})")
         if len(questions) == 0:
