@@ -368,12 +368,11 @@ def generate_batch(subject, batch_size=5, exclusion_texts=None):
     for attempt in range(max_retries):
         try:
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-5",
                 messages=[
                     {"role": "system", "content": "Сен ЕНТ оқулықтарына негізделген сұрақтар генерациялайтын мұғалімсің."},
                     {"role": "user", "content": content}
                 ],
-                temperature=0.7
             )
             response_content = response.choices[0].message.content
             if response_content is None:
@@ -713,12 +712,11 @@ def create_new_test_chat(user_id):
 def generate_chat_title(prompt, subject):
     try:
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5",
             messages=[
                 {"role": "system", "content": "Сұрақ негізінде қазақ тілінде қысқа тақырыпты анықта (максимум 5 сөз). Формат: '[Пән] - [Тақырып]'"},
                 {"role": "user", "content": f"Пән: {subject}\nСұрақ: {prompt}"}
             ],
-            temperature=0.5
         )
         content = response.choices[0].message.content
         if content is None:
@@ -735,7 +733,7 @@ def extract_kazakh_text_from_image(image_bytes: bytes, mime_type: str = "image/p
     try:
         data_url = f"data:{mime_type};base64,{b64encode(image_bytes).decode('utf-8')}"
         resp = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-5",
             messages=[
                 {
                     "role": "user",
@@ -745,7 +743,6 @@ def extract_kazakh_text_from_image(image_bytes: bytes, mime_type: str = "image/p
                     ]
                 }
             ],
-            temperature=0
         )
         content = resp.choices[0].message.content
         return content.strip() if isinstance(content, str) else (content or "").strip()
