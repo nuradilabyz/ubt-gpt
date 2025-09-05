@@ -1152,6 +1152,7 @@ def test_page():
                             except Exception as e:
                                 st.error(f"Жауап алу кезінде қате: {str(e)}")
 
+    # Test chat input - moved outside of image processing block
     user_input = st.chat_input("Тест бойынша сұрағыңызды енгізіңіз...", key=f"test_input_{st.session_state.test_chat_id}")
     if user_input:
         st.session_state.test_messages.append({"role": "user", "content": user_input})
